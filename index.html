@@ -147,12 +147,26 @@
             </div>
 
             <div id="connections-section" class="hidden">
-                <p class="text-xs mb-0.5 text-white/70">Your threads</p>
-                <div id="connections-list" class="space-y-1 text-sm"></div>
+                <!-- Collapsible header -->
+                <div id="threads-header"
+                     class="flex items-center justify-between cursor-pointer select-none px-1 py-0.5 -mx-1 rounded-lg hover:bg-white/5">
+                    <p class="text-xs text-white/70">Your threads</p>
+                    <i id="threads-chevron" class="fa-solid fa-chevron-down text-[10px] text-white/50 transition-transform"></i>
+                </div>
+
+                <!-- Thread list (collapsible) -->
+                <div id="connections-list" class="space-y-1 text-sm mt-1"></div>
             </div>
         </div>
 
-        <!-- Actions - top to bottom flow, no centering, no huge gaps -->
+        <!-- Quick resume for last accepted invite/thread -->
+        <button id="continue-last-btn"
+                class="hidden w-full mb-2 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-semibold text-sm rounded-3xl flex items-center justify-center gap-x-2 active:brightness-105">
+            <i class="fa-solid fa-play"></i>
+            <span>Continue last thread</span>
+        </button>
+
+        <!-- Actions - top to bottom flow -->
         <div class="space-y-2">
             <!-- Create New Game hidden in JS when signed in via Gmail -->
             <button id="create-game-btn"
@@ -377,6 +391,11 @@
             <div class="flex items-center gap-x-2">
                 <img src="/logo.png" alt="LoveWeave" class="w-5 h-5 rounded-lg object-cover ring-1 ring-white/15" />
                 <span>LoveWeave</span>
+                <button id="footer-help-btn"
+                        class="ml-1 text-white/50 hover:text-white transition-colors"
+                        title="How to Play">
+                    <i class="fa-solid fa-question-circle"></i>
+                </button>
             </div>
             <div class="text-center md:text-right">
                 © <span id="footer-year"></span> LoveWeave • Built for long-distance couples

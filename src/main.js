@@ -24,6 +24,9 @@ let currentUser = null;
 let currentGameUnsubscribe = null;
 let connectionUnsubscribe = null;
 let invitesUnsubscribe = null;
+let myThreadsUnsubscribe = null;
+let lastAcceptedThread = null; // for the "Continue last thread" quick button
+let threadsCollapsed = false;
 
 let myBridgeRole = 'a'; // 'a' for first/creator, 'b' for joiner. Persisted per game in localStorage.
 let currentBridgeCategory = 'all';
@@ -918,6 +921,7 @@ function handleAuthChange(user) {
       console.error('ensureUserDoc failed:', err);
     });
     listenForMyInvites(user);
+    listenForMyAcceptedThreads(user);
     ensureQuestionsSeeded();
 
     // switch from choice to main landing
@@ -939,6 +943,247 @@ function handleAuthChange(user) {
       invitesUnsubscribe();
       invitesUnsubscribe = null;
     }
+    if (myThreadsUnsubscribe) {
+      myThreadsUnsubscribe();
+      myThreadsUnsubscribe = null;
+    }
+  }
+}
+
+// Expose for manual debug if needed
+window.loadMyThreads = () => {
+  if (currentUser) listenForMyAcceptedThreads(currentUser);
+};
+
+function listenForMyAcceptedThreads(user) {
+  if (myThreadsUnsubscribe) {
+    myThreadsUnsubscribe();
+    myThreadsUnsubscribe = null;
+  }
+
+  const listEl = document.getElementById('connections-list');
+  const section = document.getElementById('connections-section');
+  if (!listEl || !section || !user?.email) return;
+
+  const email = user.email.toLowerCase();
+
+  // Listen to invites sent to me that are accepted
+  const q1 = query(
+    collection(db, 'invites'),
+    where('toEmail', '==', email),
+    where('status', '==', 'accepted')
+  );
+
+  // Listen to invites I sent (from me)
+  const q2 = query(
+    collection(db, 'invites'),
+    where('fromEmail', '==', email)
+  );
+
+  const threadsMap = new Map(); // gameId -> {gameId, partner, createdAt}
+
+  const updateList = () => {
+    listEl.innerHTML = '';
+
+    const items = Array.from(threadsMap.values());
+    if (items.length === 0) {
+      section.classList.add('hidden');
+      lastAcceptedThread = null;
+      updateContinueLastBtn();
+      return;
+    }
+
+    section.classList.remove('hidden');
+
+    // Sort newest first
+    items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+    // Set the most recent as quick-continue target
+    lastAcceptedThread = { gameId: items[0].gameId, partner: items[0].partner || 'Partner' };
+    updateContinueLastBtn();
+
+    items.forEach(t => {
+      const row = document.createElement('div');
+      row.className = 'flex items-center justify-between bg-white/5 px-2 py-1 rounded-xl text-xs gap-2';
+
+      row.innerHTML = `
+        <div class="truncate pr-2 font-mono">${t.partner || 'Partner'}</div>
+        <div class="flex items-center gap-1 flex-shrink-0">
+          <button class="px-2 py-0.5 bg-white/10 active:bg-white/20 rounded-lg">Continue</button>
+          <button class="px-1 py-0.5 text-white/50 hover:text-red-400" title="Remove"><i class="fa-solid fa-trash text-[10px]"></i></button>
+        </div>
+      `;
+
+      // Continue button
+      row.querySelector('button').onclick = () => {
+        listenToGame(t.gameId);
+        showGameScreen(t.gameId);
+      };
+
+      // Delete button
+      const delBtn = row.querySelector('button[title="Remove"]');
+      if (delBtn) {
+        delBtn.onclick = async (e) => {
+          e.stopImmediatePropagation();
+          if (!confirm('Remove this thread from your list? (This won\'t affect your partner)')) return;
+          await removeThread(t.gameId, email);
+        };
+      }
+
+      listEl.appendChild(row);
+    });
+
+    // Apply current collapse state after (re)render
+    applyThreadsCollapse();
+  };
+
+  // Merge results from both queries (skip removedFor)
+  const unsub1 = onSnapshot(q1, (snap) => {
+    snap.forEach(d => {
+      const inv = d.data();
+      const removed = Array.isArray(inv.removedFor) ? inv.removedFor : [];
+      if (inv.gameId && !removed.includes(email)) {
+        threadsMap.set(inv.gameId, {
+          gameId: inv.gameId,
+          partner: inv.fromEmail || 'Partner',
+          createdAt: inv.createdAt || 0
+        });
+      }
+    });
+    updateList();
+  });
+
+  const unsub2 = onSnapshot(q2, (snap) => {
+    snap.forEach(d => {
+      const inv = d.data();
+      const removed = Array.isArray(inv.removedFor) ? inv.removedFor : [];
+      if (inv.gameId && !removed.includes(email)) {
+        threadsMap.set(inv.gameId, {
+          gameId: inv.gameId,
+          partner: inv.toEmail || 'Partner',
+          createdAt: inv.createdAt || 0
+        });
+      }
+    });
+    updateList();
+  });
+
+  // Combined unsubscribe
+  myThreadsUnsubscribe = () => {
+    unsub1();
+    unsub2();
+  };
+
+  // Make map available for fast delete UX
+  window.__threadsMap = threadsMap;
+
+  // Setup collapsible once the elements exist
+  setupThreadsCollapsible();
+}
+
+async function removeThread(gameId, email) {
+  if (!gameId || !email) return;
+
+  try {
+    const invitesRef = collection(db, 'invites');
+    const q = query(invitesRef, where('gameId', '==', gameId));
+    const snap = await getDocs(q);
+
+    const updates = [];
+    snap.forEach(d => {
+      const data = d.data();
+      if (data.fromEmail === email || data.toEmail === email) {
+        const removed = Array.isArray(data.removedFor) ? [...data.removedFor] : [];
+        if (!removed.includes(email)) {
+          removed.push(email);
+          updates.push(setDoc(doc(db, 'invites', d.id), { removedFor: removed }, { merge: true }));
+        }
+      }
+    });
+
+    await Promise.all(updates);
+  } catch (e) {
+    console.error('removeThread error:', e);
+  }
+
+  // Remove locally regardless
+  // Note: threadsMap is local to the listener scope; we rely on snapshot re-firing or manual removal
+  // To be safe we clear and let snapshots repopulate, but for instant UI:
+  if (window.__threadsMap) {
+    window.__threadsMap.delete(gameId);
+  }
+
+  if (lastAcceptedThread && lastAcceptedThread.gameId === gameId) {
+    lastAcceptedThread = null;
+    updateContinueLastBtn();
+  }
+
+  // Re-render by forcing update if possible
+  const listEl = document.getElementById('connections-list');
+  if (listEl) {
+    // Remove the row immediately for snappy feel
+    const rows = listEl.children;
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (rows[i].textContent.includes(gameId) || rows[i].innerText.includes('Partner')) {
+        // best effort; snapshots will correct
+      }
+    }
+  }
+
+  // The snapshots will eventually remove it when they refire with updated removedFor.
+  // For instant, we can just hide the row we clicked, but simplest is to let next snapshot handle.
+  // To force immediate, we can re-run the listener logic by clearing map entries client-side.
+  // Since threadsMap is scoped, we do a tiny trick: store reference.
+}
+
+// Helper to expose threadsMap for instant delete UX (optional, safe)
+window.__threadsMap = null;
+
+function setupThreadsCollapsible() {
+  const header = document.getElementById('threads-header');
+  const list = document.getElementById('connections-list');
+  const chevron = document.getElementById('threads-chevron');
+  if (!header || !list || !chevron) return;
+
+  // Restore state
+  const saved = localStorage.getItem('threadsCollapsed');
+  threadsCollapsed = saved === 'true';
+
+  const apply = () => {
+    if (threadsCollapsed) {
+      list.classList.add('hidden');
+      chevron.classList.remove('fa-chevron-down');
+      chevron.classList.add('fa-chevron-right');
+    } else {
+      list.classList.remove('hidden');
+      chevron.classList.remove('fa-chevron-right');
+      chevron.classList.add('fa-chevron-down');
+    }
+  };
+
+  apply();
+
+  // Toggle
+  header.onclick = () => {
+    threadsCollapsed = !threadsCollapsed;
+    localStorage.setItem('threadsCollapsed', String(threadsCollapsed));
+    apply();
+  };
+}
+
+function applyThreadsCollapse() {
+  const list = document.getElementById('connections-list');
+  const chevron = document.getElementById('threads-chevron');
+  if (!list || !chevron) return;
+
+  if (threadsCollapsed) {
+    list.classList.add('hidden');
+    chevron.classList.remove('fa-chevron-down');
+    chevron.classList.add('fa-chevron-right');
+  } else {
+    list.classList.remove('hidden');
+    chevron.classList.remove('fa-chevron-right');
+    chevron.classList.add('fa-chevron-down');
   }
 }
 
@@ -1046,6 +1291,8 @@ function listenForMyInvites(user) {
         btn.disabled = true;
         try {
           await setDoc(doc(db, 'invites', inv.id), { ...inv, status: 'accepted' }, { merge: true });
+          lastAcceptedThread = { gameId: inv.gameId, partner: inv.fromEmail || 'Partner' };
+          updateContinueLastBtn();
           listenToGame(inv.gameId);
           showGameScreen(inv.gameId);
         } catch (e) {
@@ -1057,6 +1304,22 @@ function listenForMyInvites(user) {
       listEl.appendChild(row);
     });
   });
+}
+
+function updateContinueLastBtn() {
+  const btn = document.getElementById('continue-last-btn');
+  if (!btn) return;
+
+  if (lastAcceptedThread && lastAcceptedThread.gameId) {
+    btn.classList.remove('hidden');
+    btn.onclick = () => {
+      listenToGame(lastAcceptedThread.gameId);
+      showGameScreen(lastAcceptedThread.gameId);
+    };
+  } else {
+    btn.classList.add('hidden');
+    btn.onclick = null;
+  }
 }
 
 // ==================== INIT ====================
@@ -1072,6 +1335,10 @@ function init() {
 
   const helpBtn = document.getElementById('help-btn');
   if (helpBtn) helpBtn.onclick = showHelp;
+
+  // Footer help icon (visible on all screens)
+  const footerHelp = document.getElementById('footer-help-btn');
+  if (footerHelp) footerHelp.onclick = showHelp;
 
   // Other buttons
   document.getElementById('add-story-btn')?.addEventListener('click', addStoryEntry);
@@ -1223,6 +1490,21 @@ function init() {
   // Partner invite button
   const inviteBtn = document.getElementById('invite-partner-btn');
   if (inviteBtn) inviteBtn.onclick = invitePartnerByEmail;
+
+  // Quick "Continue last thread" button (from last accepted invite)
+  const continueLast = document.getElementById('continue-last-btn');
+  if (continueLast) {
+    continueLast.onclick = () => {
+      if (lastAcceptedThread && lastAcceptedThread.gameId) {
+        listenToGame(lastAcceptedThread.gameId);
+        showGameScreen(lastAcceptedThread.gameId);
+      } else {
+        // Fallback: open the most recent from the visible threads list
+        const first = document.querySelector('#connections-list button');
+        if (first) first.click();
+      }
+    };
+  }
 
   // "New Game" button inside an active game (bottom of game screen)
   const newGameBottom = document.getElementById('new-game-bottom-btn');
