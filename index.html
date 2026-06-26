@@ -24,26 +24,27 @@
 
     <!-- Navbar -->
     <nav class="flex-shrink-0 border-b border-white/10 bg-black/30 backdrop-blur-xl sticky top-0 z-50">
-        <div class="max-w-5xl mx-auto px-4 py-3.5 flex items-center justify-between">
+        <div class="max-w-5xl mx-auto px-4 py-2 sm:py-3.5 flex items-center justify-between">
             
             <!-- Left: Brand -->
-            <div class="flex items-center gap-x-3">
-                <img src="/logo.png" alt="LoveWeave" class="w-9 h-9 rounded-2xl object-cover ring-1 ring-white/20" />
-                <span class="text-2xl font-bold tracking-tight">LoveWeave</span>
+            <div class="flex items-center gap-x-2 sm:gap-x-3">
+                <img src="/logo.png" alt="LoveWeave" class="w-7 h-7 sm:w-9 sm:h-9 rounded-2xl object-cover ring-1 ring-white/20" />
+                <span class="text-xl sm:text-2xl font-bold tracking-tight">LoveWeave</span>
             </div>
 
             <!-- Right: Status + User -->
-            <div class="flex items-center gap-x-2.5">
+            <div class="flex items-center gap-x-1 sm:gap-x-2.5">
                 
                 <!-- Connection Status -->
+                <!-- Mobile: green dot only   |   Desktop: dot + "Synced" -->
                 <div id="connection-status" 
-                     class="px-3 py-1 text-[11px] font-medium bg-white/10 hover:bg-white/15 rounded-full flex items-center gap-x-1.5 transition-colors">
-                    <span class="w-1.5 h-1.5 bg-emerald-400 rounded-full"></span>
-                    <span>Synced</span>
+                     class="px-1 py-0.5 sm:px-3 sm:py-1 text-[11px] font-medium bg-white/10 hover:bg-white/15 rounded-full flex items-center transition-colors">
+                    <span class="w-2 h-2 bg-emerald-400 rounded-full"></span>
+                    <span class="hidden sm:inline ml-1 text-emerald-400">Synced</span>
                 </div>
 
-                <!-- Vertical separator -->
-                <div class="h-5 w-px bg-white/15 mx-1"></div>
+                <!-- Vertical separator (hidden on mobile) -->
+                <div class="hidden sm:block h-5 w-px bg-white/15 mx-1"></div>
 
                 <!-- User Area (compact, side by side) -->
                 <div id="navbar-user" class="hidden flex items-center gap-x-1 bg-white/5 rounded-full px-1 py-1">

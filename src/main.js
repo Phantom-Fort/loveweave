@@ -299,7 +299,7 @@ function listenToGame(gameId) {
   document.getElementById('connection-status').innerHTML = `
     <span class="flex items-center gap-x-1.5">
       <span class="w-2 h-2 bg-emerald-400 rounded-full"></span>
-      <span class="text-emerald-400 text-xs">Synced</span>
+      <span class="hidden sm:inline text-emerald-400 text-xs">Synced</span>
     </span>
   `;
 
@@ -325,7 +325,7 @@ function setupConnectionStatus() {
   statusEl.innerHTML = `
     <span class="flex items-center gap-x-1.5">
       <span class="w-2 h-2 bg-emerald-400 rounded-full"></span>
-      <span class="text-emerald-400 text-xs">Synced</span>
+      <span class="hidden sm:inline text-emerald-400 text-xs">Synced</span>
     </span>
   `;
 }
