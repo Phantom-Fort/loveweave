@@ -17,11 +17,17 @@ function parseBridgeCategories(text) {
     const catMatch = line.match(/^Category \d+:\s*(.+)$/i);
     if (catMatch) {
       if (current) categories.push(current);
-      current = { title: catMatch[1].trim(), questions: [] };
+      let title = catMatch[1].trim();
+      title = title.replace(/\s*\(Questions?\s*\d+-\d+\)\s*$/i, '').trim();
+      current = { title, questions: [] };
       continue;
     }
     const qMatch = line.match(/^\d+\.\s*(.+)$/);
-    if (qMatch && current) {
+    if (qMatch) {
+      if (!current) {
+        // Questions appear before first Category header -> default first category
+        current = { title: "Emotional Connection & Vulnerability", questions: [] };
+      }
       current.questions.push(qMatch[1].trim());
     }
   }

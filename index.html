@@ -1,122 +1,177 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="h-full">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LoveWeave</title>
+    <link rel="icon" type="image/png" href="/favicon.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
-        .touch-target {
-            min-height: 48px;
-            min-width: 48px;
-        }
-        .section-tab {
-            padding-top: 12px;
-            padding-bottom: 12px;
+        html, body { height: 100%; }
+        body { display: flex; flex-direction: column; }
+        #main-content { flex: 1 1 0%; min-height: 0; display: flex; flex-direction: column; }
+        .touch-target { min-height: 48px; min-width: 48px; }
+        .section-tab { padding-top: 12px; padding-bottom: 12px; }
+        @media (min-width: 768px) {
+            .app-main { overflow-y: hidden; }
+            .app-main > div { max-height: 100%; }
         }
     </style>
 </head>
-<body class="bg-[#1a1423] text-white min-h-screen">
+<body class="bg-[#1a1423] text-white min-h-screen flex flex-col">
     <div id="hearts-bg" class="fixed inset-0 pointer-events-none z-0"></div>
 
     <!-- Navbar -->
-    <nav class="border-b border-white/10 bg-black/30 backdrop-blur-xl sticky top-0 z-50">
-        <div class="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
+    <nav class="flex-shrink-0 border-b border-white/10 bg-black/30 backdrop-blur-xl sticky top-0 z-50">
+        <div class="max-w-5xl mx-auto px-4 py-3.5 flex items-center justify-between">
+            
+            <!-- Left: Brand -->
             <div class="flex items-center gap-x-3">
-                <div class="w-9 h-9 bg-gradient-to-br from-pink-500 to-purple-600 rounded-2xl flex items-center justify-center">
-                    <i class="fa-solid fa-heart text-white text-2xl"></i>
-                </div>
+                <img src="/logo.png" alt="LoveWeave" class="w-9 h-9 rounded-2xl object-cover ring-1 ring-white/20" />
                 <span class="text-2xl font-bold tracking-tight">LoveWeave</span>
             </div>
-            <div id="connection-status" class="px-3 py-1 text-xs bg-white/10 rounded-2xl">Connecting...</div>
+
+            <!-- Right: Status + User -->
+            <div class="flex items-center gap-x-2.5">
+                
+                <!-- Connection Status -->
+                <div id="connection-status" 
+                     class="px-3 py-1 text-[11px] font-medium bg-white/10 hover:bg-white/15 rounded-full flex items-center gap-x-1.5 transition-colors">
+                    <span class="w-1.5 h-1.5 bg-emerald-400 rounded-full"></span>
+                    <span>Synced</span>
+                </div>
+
+                <!-- Vertical separator -->
+                <div class="h-5 w-px bg-white/15 mx-1"></div>
+
+                <!-- User Area (compact, side by side) -->
+                <div id="navbar-user" class="hidden flex items-center gap-x-1 bg-white/5 rounded-full px-1 py-1">
+                    <div class="group relative flex items-center">
+                        <!-- Avatar -->
+                        <div class="w-7 h-7 rounded-full bg-gradient-to-br from-pink-500 to-purple-600 flex items-center justify-center text-xs ring-1 ring-white/20 cursor-default">
+                            <i class="fa-solid fa-user"></i>
+                        </div>
+
+                        <!-- Hover tooltip with name -->
+                        <div class="hidden group-hover:block absolute right-0 top-full mt-2 z-[60] whitespace-nowrap rounded-xl border border-white/10 bg-[#1a1423] px-3 py-1 text-xs shadow-xl">
+                            <span id="navbar-user-name" class="font-medium"></span>
+                        </div>
+                    </div>
+
+                    <!-- Sign out icon, right next to avatar -->
+                    <button id="navbar-signout-btn" 
+                            class="text-white/50 hover:text-white hover:bg-white/10 px-2 py-1 rounded-full transition-colors text-sm"
+                            title="Sign out">
+                        <i class="fa-solid fa-sign-out-alt"></i>
+                    </button>
+                </div>
+            </div>
+
         </div>
     </nav>
 
-    <!-- Auth Choice Screen -->
-    <div id="auth-choice-screen" class="max-w-md mx-auto px-5 pt-16">
-        <div class="text-center mb-10">
-            <h1 class="text-5xl font-bold tracking-tighter mb-2">LoveWeave</h1>
-            <p class="text-white/70 mb-8">Real-time space for long-distance couples</p>
-        </div>
+    <!-- Main scroll-constrained content area (no outer scroll on desktop) -->
+    <div id="main-content" class="flex-1 flex flex-col min-h-0 overflow-hidden">
 
-        <div class="glass p-6 rounded-3xl mb-4 space-y-4">
-            <p class="text-sm text-white/70">Choose how you want to play:</p>
-            <button id="auth-signin-btn"
-                    class="w-full py-3.5 bg-white text-[#1a1423] font-semibold rounded-3xl flex items-center justify-center gap-x-2 active:bg-white/90 touch-target">
-                <i class="fa-brands fa-google"></i>
-                <span>Sign in with Google</span>
-            </button>
+    <!-- Auth Choice Screen -->
+    <div id="auth-choice-screen" class="flex-1 flex items-center justify-center px-4">
+        <div class="max-w-sm w-full">
+            <div class="text-center mb-8">
+                <div class="flex justify-center mb-4">
+                    <img src="/logo.png" alt="LoveWeave" class="w-16 h-16 rounded-3xl object-cover ring-1 ring-white/20" />
+                </div>
+                <h1 class="text-4xl md:text-5xl font-bold tracking-tighter mb-2">LoveWeave</h1>
+                <p class="text-white/70 text-base">Real-time space for long-distance couples</p>
+            </div>
+
+            <div class="glass p-6 rounded-3xl space-y-4">
+                <p class="text-sm text-white/70 text-center">Choose how you want to play:</p>
+                
+                <button id="auth-signin-btn"
+                        class="w-full py-3.5 bg-white text-[#1a1423] font-semibold rounded-3xl flex items-center justify-center gap-x-2 active:bg-white/90 text-base">
+                    <i class="fa-brands fa-google"></i>
+                    <span>Sign in with Google</span>
+                </button>
+                
             <button id="auth-anon-btn"
-                    class="w-full py-3 bg-white/10 active:bg-white/20 rounded-3xl font-medium text-sm touch-target">
+                    class="w-full py-3.5 px-4 bg-white/5 hover:bg-white/10 border border-white/20 active:bg-white/15 rounded-3xl font-medium text-sm leading-tight">
                 Continue without login (use Game ID)
             </button>
-            <p class="text-[10px] text-white/50 mt-2 leading-snug">Sign in to add partners by email and get in-app invitations.</p>
+                
+                <p class="text-[10px] text-white/50 text-center pt-1">Sign in to invite partners by email</p>
+            </div>
         </div>
     </div>
 
-    <!-- Landing Screen -->
-    <div id="landing-screen" class="max-w-md mx-auto px-5 pt-12 hidden">
-        <div class="text-center mb-7">
-            <h1 class="text-5xl font-bold tracking-tighter mb-2">LoveWeave</h1>
-            <p class="text-white/70">Real-time space for long-distance couples</p>
+    <!-- Landing Screen: flows from top, dense, good mobile presence -->
+    <div id="landing-screen" class="max-w-md mx-auto px-4 pt-2 pb-3 hidden">
+        
+        <!-- Header -->
+        <div class="text-center mb-1.5">
+            <div class="flex justify-center mb-1">
+                <img src="/logo.png" alt="LoveWeave" class="w-8 h-8 rounded-xl object-cover ring-1 ring-white/20" />
+            </div>
+            <h1 class="text-2xl md:text-3xl font-bold tracking-tighter">LoveWeave</h1>
+            <p class="text-white/70 text-xs mt-0.5">Real-time space for long-distance couples</p>
         </div>
 
-        <!-- Auth -->
-        <div id="auth-area" class="mb-7">
-            <button id="google-signin-btn"
-                    class="w-full py-3.5 bg-white text-[#1a1423] font-semibold rounded-3xl flex items-center justify-center gap-x-2 active:bg-white/90 touch-target">
-                <i class="fa-brands fa-google"></i>
-                <span>Sign in with Google</span>
-            </button>
-            <div id="user-info" class="hidden mt-3 text-sm items-center gap-x-2 bg-white/5 px-4 py-2 rounded-2xl">
-                <span class="truncate flex-1 min-w-0">Signed in as <span id="user-email" class="font-mono text-xs"></span></span>
-                <button id="signout-btn" class="text-xs px-3 py-1 bg-white/10 hover:bg-white/15 rounded-xl flex-shrink-0">Sign out</button>
+        <!-- Intro video -->
+        <div class="flex justify-center mb-3">
+            <video src="/loveweave_video.mp4" autoplay loop muted playsinline class="w-full max-w-[140px] rounded-xl object-cover ring-1 ring-white/10"></video>
+        </div>
+
+        <!-- Auth status -->
+        <div id="auth-area" class="mb-2">
+            <div id="user-info" class="hidden text-xs text-white/50">
+                Signed in as <span id="user-email" class="font-mono"></span>
             </div>
         </div>
 
-        <!-- Partner tools (shown after sign in) -->
-        <div id="partner-tools" class="hidden mb-7 space-y-5">
+        <!-- Partner tools -->
+        <div id="partner-tools" class="hidden mb-3 space-y-2">
             <div>
-                <p class="text-sm mb-2 text-white/70">Add partner by Gmail</p>
+                <p class="text-xs mb-1 text-white/70">Add partner by Gmail</p>
                 <div class="flex gap-2">
                     <input id="partner-email" type="email" placeholder="partner@gmail.com" 
-                           class="flex-1 bg-white/5 border border-white/20 rounded-2xl px-4 py-3 text-sm h-12">
+                           class="flex-1 bg-white/5 border border-white/20 rounded-2xl px-3 py-1.5 text-sm h-9">
                     <button id="invite-partner-btn" 
-                            class="px-5 bg-white/10 active:bg-white/20 rounded-2xl font-medium touch-target h-12">Invite</button>
+                            class="px-4 bg-white/10 active:bg-white/20 rounded-2xl font-medium text-sm h-9">Invite</button>
                 </div>
             </div>
 
-            <div id="pending-section" class="hidden">
-                <p class="text-sm mb-2 text-white/70">Pending invitations</p>
-                <div id="pending-list" class="space-y-2 text-sm"></div>
+            <div>
+                <p class="text-xs mb-0.5 text-white/70">Invitations</p>
+                <div id="invitations-list" class="space-y-1 text-sm min-h-[20px]"></div>
             </div>
 
             <div id="connections-section" class="hidden">
-                <p class="text-sm mb-2 text-white/70">Your threads</p>
-                <div id="connections-list" class="space-y-2 text-sm"></div>
+                <p class="text-xs mb-0.5 text-white/70">Your threads</p>
+                <div id="connections-list" class="space-y-1 text-sm"></div>
             </div>
         </div>
 
-        <div class="space-y-4">
+        <!-- Actions - top to bottom flow, no centering, no huge gaps -->
+        <div class="space-y-2">
+            <!-- Create New Game hidden in JS when signed in via Gmail -->
             <button id="create-game-btn"
-                    class="w-full py-3.5 bg-white text-[#1a1423] font-semibold text-lg rounded-3xl flex items-center justify-center gap-x-3 active:bg-white/90 touch-target">
+                    class="w-full py-2.5 bg-white text-[#1a1423] font-semibold text-sm rounded-3xl flex items-center justify-center gap-x-2 active:bg-white/90">
                 <i class="fa-solid fa-plus"></i>
                 <span>Create New Game</span>
             </button>
 
-            <div class="glass p-5 rounded-3xl">
-                <p class="text-sm mb-3 text-white/70">Join with Game ID</p>
+            <div class="glass p-2.5 rounded-2xl">
+                <p class="text-xs mb-1 text-white/60">Join with Game ID</p>
                 <div class="flex gap-2">
                     <input id="join-game-id" type="text" placeholder="LOVE-ABC123" 
-                           class="flex-1 bg-white/5 border border-white/20 rounded-2xl px-4 py-3 text-sm h-11">
+                           class="flex-1 bg-white/5 border border-white/20 rounded-2xl px-3 py-1.5 text-sm h-9">
                     <button id="join-game-btn" 
-                            class="px-5 bg-white/10 active:bg-white/20 rounded-2xl font-medium touch-target h-11">Join</button>
+                            class="px-4 bg-white/10 active:bg-white/20 rounded-2xl font-medium text-sm h-9">Join</button>
                 </div>
             </div>
 
             <button id="help-btn"
-                    class="w-full py-3 mt-1 bg-white/10 active:bg-white/20 rounded-3xl font-medium text-sm flex items-center justify-center gap-x-2 touch-target">
+                    class="w-full py-2 bg-white/10 active:bg-white/20 rounded-2xl font-medium text-sm flex items-center justify-center gap-x-2">
                 <i class="fa-solid fa-question-circle"></i>
                 <span>How to Play</span>
             </button>
@@ -124,130 +179,154 @@
     </div>
 
     <!-- Game Screen -->
-    <div id="game-screen" class="hidden max-w-5xl mx-auto px-4 pb-8">
-        <div class="flex items-center justify-between mb-6 pt-4">
+    <div id="game-screen" class="hidden max-w-5xl mx-auto px-4 flex flex-col h-full pb-1 overflow-hidden">
+        <div class="flex items-center justify-between pt-2 pb-1 flex-shrink-0">
             <div>
-                <div class="flex items-center gap-x-3">
-                    <h2 class="text-3xl font-bold">Our Thread</h2>
-                    <div class="px-3 py-1 bg-white/10 text-xs font-mono rounded-2xl" id="game-id-display"></div>
+                <div class="flex items-center gap-x-2">
+                    <img src="/logo.png" alt="" class="w-7 h-7 rounded-xl object-cover ring-1 ring-white/20" />
+                    <h2 class="text-xl md:text-2xl font-bold">Our Thread</h2>
+                    <div class="px-2 py-0.5 bg-white/10 text-xs font-mono rounded-xl" id="game-id-display"></div>
                 </div>
-                <p class="text-white/50 text-sm">Real-time synced</p>
+                <p class="text-white/50 text-xs">Real-time synced</p>
             </div>
-            <div class="flex items-center gap-x-2 bg-white/5 px-4 py-2 rounded-3xl">
+            <div class="flex items-center gap-x-2 bg-white/5 px-3 py-1 rounded-2xl text-sm">
                 <i class="fa-solid fa-heart text-pink-400"></i>
-                <span id="love-meter-value" class="font-mono text-sm">45</span>
+                <span id="love-meter-value" class="font-mono">45</span>
             </div>
         </div>
 
         <!-- Tabs -->
-        <div class="flex border-b border-white/10 mb-5 overflow-x-auto">
-            <button onclick="switchTab(0)" id="tab-0" class="section-tab active px-5 py-3 font-medium border-b-[3px] border-pink-400 whitespace-nowrap">Our Story</button>
-            <button onclick="switchTab(1)" id="tab-1" class="section-tab px-5 py-3 font-medium text-white/70 whitespace-nowrap">Daily Spark</button>
-            <button onclick="switchTab(2)" id="tab-2" class="section-tab px-5 py-3 font-medium text-white/70 whitespace-nowrap">Love Notes</button>
-            <button onclick="switchTab(3)" id="tab-3" class="section-tab px-5 py-3 font-medium text-white/70 whitespace-nowrap">Guess About Me</button>
-            <button onclick="switchTab(4)" id="tab-4" class="section-tab px-5 py-3 font-medium text-white/70 whitespace-nowrap">Bridge the Gap</button>
+        <div class="flex border-b border-white/10 mb-2 overflow-x-auto flex-shrink-0">
+            <button onclick="switchTab(0)" id="tab-0" class="section-tab active px-4 py-2 font-medium border-b-[3px] border-pink-400 whitespace-nowrap text-sm">Story</button>
+            <button onclick="switchTab(1)" id="tab-1" class="section-tab px-4 py-2 font-medium text-white/70 whitespace-nowrap text-sm">Daily</button>
+            <button onclick="switchTab(2)" id="tab-2" class="section-tab px-4 py-2 font-medium text-white/70 whitespace-nowrap text-sm">Notes</button>
+            <button onclick="switchTab(3)" id="tab-3" class="section-tab px-4 py-2 font-medium text-white/70 whitespace-nowrap text-sm">Guess</button>
+            <button onclick="switchTab(4)" id="tab-4" class="section-tab px-4 py-2 font-medium text-white/70 whitespace-nowrap text-sm">Bridge</button>
+        </div>
+
+        <!-- Bottom New Game -->
+        <div class="mb-2 flex-shrink-0">
+            <button id="new-game-bottom-btn"
+                    class="w-full py-1.5 bg-white/10 active:bg-white/20 rounded-2xl font-medium text-xs flex items-center justify-center gap-x-1.5">
+                <i class="fa-solid fa-plus"></i>
+                <span>New Game</span>
+            </button>
         </div>
 
         <!-- Our Story -->
-        <div id="tab-content-0">
-            <div class="glass rounded-3xl p-5 mb-6">
-                <div class="mb-4 p-3 bg-white/5 rounded-2xl text-sm">
-                    <strong>Why this matters:</strong> Build your shared relationship story and memories together.
+        <div id="tab-content-0" class="flex-1 min-h-0 flex flex-col">
+            <div class="glass rounded-2xl p-3 flex flex-col flex-1 min-h-0">
+                <div class="mb-2 p-2 bg-white/5 rounded-xl text-xs">
+                    <strong>Why this matters:</strong> Build your shared story together.
                 </div>
-                <div id="story-container" class="space-y-4 max-h-[340px] overflow-y-auto mb-5"></div>
-                <div class="border-t border-white/10 pt-5">
-                    <select id="story-tone" class="w-full bg-white/5 border border-white/20 rounded-2xl px-4 py-3 mb-3 text-sm">
-                        <option value="romantic">❤️ Romantic</option>
-                        <option value="silly">😄 Fun</option>
-                        <option value="future">🌟 Future</option>
-                        <option value="spicy">🔥 Spicy</option>
-                    </select>
-                    <textarea id="story-input" rows="3" placeholder="Add to our story..." class="w-full bg-white/5 border border-white/20 rounded-3xl px-4 py-3"></textarea>
-                    <button id="add-story-btn" class="mt-3 w-full py-3.5 bg-white text-[#1a1423] font-semibold rounded-3xl active:bg-white/90">Add to Story</button>
+                <div id="story-container" class="space-y-2 flex-1 min-h-0 overflow-y-auto mb-2 text-sm"></div>
+                <div class="border-t border-white/10 pt-2">
+                    <!-- Story Tone - Fully dark custom dropdown -->
+                    <div class="relative mb-2">
+                        <button id="story-tone-btn"
+                                class="w-full flex items-center justify-between bg-[#2a2433] hover:bg-[#35303f] border border-white/10 hover:border-white/30 focus:border-pink-400 focus:ring-1 focus:ring-pink-400/40 rounded-2xl px-3 py-2 text-xs outline-none transition-all text-left">
+                            <span id="story-tone-value" class="flex items-center gap-x-2">❤️ Romantic</span>
+                            <i class="fa-solid fa-chevron-down text-white/50 text-xs"></i>
+                        </button>
+                        <div id="story-tone-menu" 
+                             class="hidden absolute z-[70] mt-1 w-full rounded-2xl border border-white/10 bg-[#1f1a27] text-white shadow-2xl overflow-hidden text-sm">
+                            <div data-value="romantic" class="tone-option flex items-center gap-x-2 px-3 py-1.5 hover:bg-white/10 active:bg-white/5 cursor-pointer text-xs">❤️ Romantic</div>
+                            <div data-value="silly" class="tone-option flex items-center gap-x-2 px-3 py-1.5 hover:bg-white/10 active:bg-white/5 cursor-pointer text-xs">😄 Fun</div>
+                            <div data-value="future" class="tone-option flex items-center gap-x-2 px-3 py-1.5 hover:bg-white/10 active:bg-white/5 cursor-pointer text-xs">🌟 Future</div>
+                            <div data-value="spicy" class="tone-option flex items-center gap-x-2 px-3 py-1.5 hover:bg-white/10 active:bg-white/5 cursor-pointer text-xs">🔥 Spicy</div>
+                        </div>
+                        <input type="hidden" id="story-tone" value="romantic">
+                    </div>
+
+                    <textarea id="story-input" rows="2" placeholder="Add to our story..." class="w-full bg-white/5 border border-white/20 rounded-2xl px-3 py-2 mb-2 text-sm"></textarea>
+                    
+                    <button id="add-story-btn" class="w-full py-2 bg-white text-[#1a1423] font-semibold rounded-2xl text-sm active:bg-white/90">Add to Story</button>
                 </div>
             </div>
         </div>
 
         <!-- Daily Spark -->
-        <div id="tab-content-1" class="hidden">
-            <div class="glass rounded-3xl p-5">
-                <div class="flex justify-between mb-3">
-                    <h3 class="font-semibold">Today's Spark</h3>
-                    <button id="new-prompt-btn" class="text-sm px-4 py-1 bg-white/10 rounded-2xl active:bg-white/20">New Prompt</button>
+        <div id="tab-content-1" class="hidden flex-1 min-h-0 flex flex-col">
+            <div class="glass rounded-2xl p-3 flex flex-col flex-1 min-h-0">
+                <div class="flex justify-between mb-1">
+                    <h3 class="font-semibold text-sm">Today's Spark</h3>
+                    <button id="new-prompt-btn" class="text-xs px-2 py-0.5 bg-white/10 rounded-xl">New</button>
                 </div>
-                <div id="current-prompt" class="bg-white/5 p-5 rounded-3xl mb-6"></div>
-                <div id="partner-answer" class="bg-white/5 p-4 rounded-3xl mb-4">
-                    <div class="text-xs text-white/50 mb-1">Partner's answer</div>
-                    <p id="partner-answer-text" class="text-white/70">Your partner hasn't answered yet...</p>
+                <div id="current-prompt" class="bg-white/5 p-3 rounded-2xl mb-2 text-sm"></div>
+                <div id="partner-answer" class="bg-white/5 p-2 rounded-2xl mb-2 text-sm">
+                    <div class="text-[10px] text-white/50">Partner</div>
+                    <p id="partner-answer-text" class="text-white/70 text-xs">Waiting...</p>
                 </div>
-                <textarea id="my-answer" rows="3" placeholder="Your answer..." class="w-full bg-white/5 border border-white/20 rounded-3xl px-4 py-3 mb-3"></textarea>
-                <button id="submit-answer-btn" class="w-full py-3.5 bg-gradient-to-r from-pink-500 to-rose-500 rounded-3xl active:brightness-105">Submit Answer</button>
+                <textarea id="my-answer" rows="2" placeholder="Your answer..." class="w-full bg-white/5 border border-white/20 rounded-2xl px-3 py-2 mb-2 text-sm"></textarea>
+                <button id="submit-answer-btn" class="w-full py-2 bg-gradient-to-r from-pink-500 to-rose-500 rounded-2xl text-sm active:brightness-105">Submit</button>
             </div>
         </div>
 
         <!-- Love Notes -->
-        <div id="tab-content-2" class="hidden">
-            <div class="glass rounded-3xl p-5">
-                <div class="flex gap-2 mb-4">
-                    <input id="note-input" type="text" placeholder="Leave a love note..." class="flex-1 bg-white/5 border border-white/20 rounded-3xl px-4 py-3">
-                    <button id="send-note-btn" class="px-6 bg-gradient-to-r from-pink-500 to-purple-600 rounded-3xl active:brightness-105">Send</button>
+        <div id="tab-content-2" class="hidden flex-1 min-h-0 flex flex-col">
+            <div class="glass rounded-2xl p-3 flex flex-col flex-1 min-h-0">
+                <div class="flex gap-2 mb-2">
+                    <input id="note-input" type="text" placeholder="Love note..." class="flex-1 bg-white/5 border border-white/20 rounded-2xl px-3 py-1.5 text-sm">
+                    <button id="send-note-btn" class="px-4 bg-gradient-to-r from-pink-500 to-purple-600 rounded-2xl text-sm active:brightness-105">Send</button>
                 </div>
-                <div id="notes-container" class="space-y-3 max-h-[300px] overflow-y-auto"></div>
+                <div id="notes-container" class="space-y-1 flex-1 min-h-0 overflow-y-auto text-sm"></div>
             </div>
         </div>
 
         <!-- Guess About Me -->
-        <div id="tab-content-3" class="hidden">
-            <div class="glass rounded-3xl p-5">
-                <div class="flex justify-between mb-2">
-                    <h3 class="font-semibold">Guess About Me</h3>
-                    <div id="guess-score" class="text-sm px-3 py-1 bg-white/10 rounded-2xl">Score: 0/0</div>
+        <div id="tab-content-3" class="hidden flex-1 min-h-0 flex flex-col">
+            <div class="glass rounded-2xl p-3 flex flex-col flex-1 min-h-0">
+                <div class="flex justify-between mb-1">
+                    <h3 class="font-semibold text-sm">Guess About Me</h3>
+                    <div id="guess-score" class="text-xs px-2 py-0.5 bg-white/10 rounded-xl">0/0</div>
                 </div>
-                <div class="mb-4">
-                    <textarea id="guess-input" rows="2" placeholder="Write something about your partner..." class="w-full bg-white/5 border border-white/20 rounded-3xl px-4 py-3"></textarea>
-                    <button id="submit-guess-btn" class="mt-3 w-full py-3 bg-gradient-to-r from-purple-500 to-pink-500 rounded-3xl active:brightness-105">Submit Guess</button>
+                <div class="mb-2">
+                    <textarea id="guess-input" rows="1" placeholder="Write about your partner..." class="w-full bg-white/5 border border-white/20 rounded-2xl px-3 py-1.5 text-sm"></textarea>
+                    <button id="submit-guess-btn" class="mt-1 w-full py-1.5 bg-gradient-to-r from-purple-500 to-pink-500 rounded-2xl text-sm active:brightness-105">Submit</button>
                 </div>
-                <div id="guesses-container" class="space-y-4"></div>
+                <div id="guesses-container" class="space-y-1 flex-1 min-h-0 overflow-y-auto text-sm"></div>
             </div>
         </div>
 
         <!-- Bridge the Gap -->
-        <div id="tab-content-4" class="hidden">
-            <div class="glass rounded-3xl p-5">
-                <div class="flex items-center justify-between mb-3">
-                    <div>
-                        <h3 class="font-semibold">Bridge the Gap</h3>
-                        <p class="text-xs text-white/60">500 Questions • Categorized (Emotional, Conflict, Values, Intimacy, etc.)</p>
+        <div id="tab-content-4" class="hidden flex-1 min-h-0 flex flex-col">
+            <div class="glass rounded-2xl p-3 flex flex-col flex-1 min-h-0">
+                <div class="flex items-center justify-between mb-1">
+                    <div class="text-sm font-semibold">Bridge the Gap</div>
+                    <div class="text-[10px] text-white/50">500 Qs</div>
+                </div>
+                <div class="relative mb-2">
+                    <button id="bridge-category-btn"
+                            class="w-full flex items-center justify-between bg-[#2a2433] hover:bg-[#35303f] border border-white/10 hover:border-white/30 focus:border-pink-400 focus:ring-1 focus:ring-pink-400/40 rounded-2xl px-3 py-1.5 text-xs outline-none transition-all text-left">
+                        <span id="bridge-category-value" class="truncate">All questions</span>
+                        <i class="fa-solid fa-chevron-down text-white/50 text-xs"></i>
+                    </button>
+                    <div id="bridge-category-menu" class="hidden absolute z-[70] mt-1 w-full max-h-48 overflow-auto rounded-2xl border border-white/10 bg-[#1f1a27] shadow-2xl text-xs">
+                        <!-- Populated by JS -->
                     </div>
-                    <div class="text-right">
-                        <div id="bridge-progress" class="text-xs px-3 py-1 bg-white/10 rounded-2xl">Q 1 / <span id="bridge-total">500</span></div>
-                        <div id="bridge-completed" class="text-[10px] text-white/50 mt-0.5">0 answered</div>
-                    </div>
-                </div>
-                <div class="mb-2">
-                    <select id="bridge-category" class="w-full bg-white/5 border border-white/20 rounded-2xl px-4 py-2 text-sm"></select>
+                    <input type="hidden" id="bridge-category" value="all">
                 </div>
 
-                <div id="bridge-question" class="bg-white/5 p-5 rounded-3xl min-h-[88px] text-[15px] mb-4"></div>
+                <div id="bridge-question" class="bg-white/5 p-3 rounded-2xl min-h-[60px] text-xs mb-2"></div>
 
-                <div class="flex gap-2 mb-4">
-                    <button id="bridge-prev-btn" class="flex-1 py-2.5 bg-white/10 active:bg-white/20 rounded-2xl text-sm">Back</button>
-                    <button id="bridge-next-btn" class="flex-1 py-2.5 bg-white/10 active:bg-white/20 rounded-2xl text-sm">Next</button>
+                <div class="flex gap-2 mb-2">
+                    <button id="bridge-prev-btn" class="flex-1 py-1 bg-white/10 active:bg-white/20 rounded-xl text-xs">Back</button>
+                    <button id="bridge-next-btn" class="flex-1 py-1 bg-white/10 active:bg-white/20 rounded-xl text-xs">Next</button>
                 </div>
 
-                <div class="border-t border-white/10 pt-4">
-                    <textarea id="bridge-my-answer" rows="2" placeholder="Your answer (saved live)..." class="w-full bg-white/5 border border-white/20 rounded-3xl px-4 py-3 mb-2"></textarea>
-                    <button id="bridge-save-btn" class="w-full py-2.5 bg-gradient-to-r from-pink-500 to-purple-600 rounded-3xl text-sm active:brightness-105">Save Answer</button>
+                <div class="border-t border-white/10 pt-2">
+                    <textarea id="bridge-my-answer" rows="1" placeholder="Your answer..." class="w-full bg-white/5 border border-white/20 rounded-2xl px-3 py-1 mb-1 text-sm"></textarea>
+                    <button id="bridge-save-btn" class="w-full py-1.5 bg-gradient-to-r from-pink-500 to-purple-600 rounded-2xl text-xs active:brightness-105">Save</button>
                 </div>
 
-                <div class="mt-4">
-                    <div class="text-xs text-white/60 mb-1">Partner's answer</div>
-                    <div id="bridge-partner-answer" class="bg-white/5 p-4 rounded-3xl text-sm text-white/80">Waiting for partner...</div>
+                <div class="mt-2">
+                    <div class="text-[10px] text-white/60">Partner</div>
+                    <div id="bridge-partner-answer" class="bg-white/5 p-2 rounded-2xl text-xs text-white/80">Waiting...</div>
                 </div>
 
-                <div class="mt-4 flex gap-2">
-                    <button id="bridge-random-btn" class="flex-1 py-2 bg-white/10 active:bg-white/20 rounded-2xl text-sm">Random Question</button>
-                    <button id="bridge-reset-btn" class="flex-1 py-2 bg-white/10 active:bg-white/20 rounded-2xl text-sm">Reset Progress</button>
+                <div class="mt-2 flex gap-2">
+                    <button id="bridge-random-btn" class="flex-1 py-1 bg-white/10 active:bg-white/20 rounded-xl text-xs">Random</button>
+                    <button id="bridge-reset-btn" class="flex-1 py-1 bg-white/10 active:bg-white/20 rounded-xl text-xs">Reset</button>
                 </div>
             </div>
         </div>
@@ -290,5 +369,19 @@
     </div>
 
     <script type="module" src="/src/main.js"></script>
+
+    </div>
+    <!-- Standardized Footer (always at bottom) -->
+    <footer class="mt-auto flex-shrink-0 border-t border-white/10 bg-black/20">
+        <div class="max-w-5xl mx-auto px-4 py-6 flex flex-col md:flex-row items-center justify-between gap-3 text-xs text-white/60">
+            <div class="flex items-center gap-x-2">
+                <img src="/logo.png" alt="LoveWeave" class="w-5 h-5 rounded-lg object-cover ring-1 ring-white/15" />
+                <span>LoveWeave</span>
+            </div>
+            <div class="text-center md:text-right">
+                © <span id="footer-year"></span> LoveWeave • Built for long-distance couples
+            </div>
+        </div>
+    </footer>
   </body>
 </html>

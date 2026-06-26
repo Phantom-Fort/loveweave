@@ -23,11 +23,13 @@ let gameState = {};
 let currentUser = null;
 let currentGameUnsubscribe = null;
 let connectionUnsubscribe = null;
+let invitesUnsubscribe = null;
 
 let myBridgeRole = 'a'; // 'a' for first/creator, 'b' for joiner. Persisted per game in localStorage.
+let currentBridgeCategory = 'all';
 
 // ==================== 100 PROMPTS ====================
-const promptsPool = [
+let promptsPool = [
   "What’s one small thing I did recently that made you feel incredibly loved?",
   "If we could teleport anywhere together for 24 hours right now, where would we go?",
   "What’s a memory of us that still makes you smile?",
@@ -128,6 +130,69 @@ const promptsPool = [
 // Bridge questions now come from content.js (categorized 500 questions)
 let bridgeQuestions = allBridgeQuestions;
 
+// Local fallback sets
+const QUESTION_SETS = {
+  bridge: {
+    id: 'bridge',
+    title: 'Bridge the Gap',
+    questions: allBridgeQuestions
+  },
+  loveSparks: {
+    id: 'loveSparks',
+    title: 'Love Sparks',
+    questions: promptsPool
+  }
+};
+
+// ==================== QUESTIONS SEEDING (creates /questions collection) ====================
+async function ensureQuestionsSeeded() {
+  // Seeding requires being signed in (per current rules)
+  const user = currentUser || auth.currentUser;
+  if (!user) {
+    console.log('[LoveWeave] Skipping questions seed (no auth)');
+    return;
+  }
+
+  try {
+    const bridgeRef = doc(db, 'questions', 'bridge');
+    const sparkRef = doc(db, 'questions', 'loveSparks');
+
+    const [bridgeSnap, sparkSnap] = await Promise.all([
+      getDoc(bridgeRef),
+      getDoc(sparkRef)
+    ]);
+
+    if (!bridgeSnap.exists()) {
+      await setDoc(bridgeRef, {
+        title: 'Bridge the Gap',
+        questions: allBridgeQuestions,
+        count: allBridgeQuestions.length,
+        updatedAt: Date.now()
+      });
+      console.log('[LoveWeave] ✅ Seeded questions/bridge (500 questions)');
+    } else {
+      console.log('[LoveWeave] questions/bridge already exists');
+    }
+
+    if (!sparkSnap.exists()) {
+      await setDoc(sparkRef, {
+        title: 'Love Sparks',
+        questions: promptsPool,
+        count: promptsPool.length,
+        updatedAt: Date.now()
+      });
+      console.log('[LoveWeave] ✅ Seeded questions/loveSparks');
+    } else {
+      console.log('[LoveWeave] questions/loveSparks already exists');
+    }
+  } catch (e) {
+    console.error('ensureQuestionsSeeded error:', e);
+  }
+}
+
+// Manual helper (call from console if needed)
+window.seedQuestionsToFirestore = ensureQuestionsSeeded;
+
 // ==================== FLOATING HEARTS ====================
 function createFloatingHearts() {
   const container = document.getElementById('hearts-bg');
@@ -148,6 +213,70 @@ function generateGameId() {
   let id = 'LOVE-';
   for (let i = 0; i < 6; i++) id += chars[Math.floor(Math.random() * chars.length)];
   return id;
+}
+
+function makePairKey(emailA, emailB) {
+  const e1 = (emailA || '').toLowerCase().trim();
+  const e2 = (emailB || '').toLowerCase().trim();
+  if (!e1 || !e2) return null;   // only treat as a pair if BOTH emails are known
+  const parts = [e1, e2].sort();
+  return parts.join('|');
+}
+
+async function findExistingGameForPair(pairKey) {
+  if (!pairKey) return null;
+  try {
+    const q = query(collection(db, 'games'), where('pairKey', '==', pairKey));
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      return snap.docs[0].id;
+    }
+  } catch (e) {
+    console.error('findExistingGameForPair error:', e);
+  }
+  return null;
+}
+
+// Force a brand new game even if the pair already has one (used by the "New Game" button inside an active game)
+async function forceNewGame() {
+  const gameId = generateGameId();
+
+  // Build a fresh pairKey that is intentionally different so it never matches previous threads
+  const currentPartner = gameState?.members?.find(e => e !== currentUser?.email?.toLowerCase()) || '';
+  const members = [];
+  if (currentUser?.email) members.push(currentUser.email.toLowerCase());
+  if (currentPartner) members.push(currentPartner);
+
+  const uniquePairKey = (makePairKey(currentUser?.email, currentPartner) || 'solo') + '_' + Date.now();
+
+  gameState = {
+    id: gameId,
+    story: [],
+    currentPrompt: promptsPool[Math.floor(Math.random() * promptsPool.length)],
+    myAnswer: '',
+    partnerAnswer: '',
+    notes: [],
+    guesses: [],
+    correctGuesses: 0,
+    totalAnswered: 0,
+    loveMeter: 45,
+    createdAt: Date.now(),
+    bridgeIndex: 0,
+    bridgeAnswers: {},
+    members: members.length ? members : undefined,
+    pairKey: uniquePairKey
+  };
+
+  ensureBridgeRole(gameId, true);
+
+  try {
+    await setDoc(doc(db, 'games', gameId), gameState);
+    listenToGame(gameId);
+    showGameScreen(gameId);
+  } catch (e) {
+    console.error('forceNewGame failed:', e);
+    alert('Could not create a new game.');
+  }
 }
 
 function saveToFirebase() {
@@ -202,8 +331,29 @@ function setupConnectionStatus() {
 }
 
 // ==================== GAME FUNCTIONS ====================
-function createNewGame() {
+async function createNewGame() {
   const gameId = generateGameId();
+
+  // Build members from current user + the email in the "add partner" field (if any)
+  const partnerEmail = (document.getElementById('partner-email')?.value || '').trim().toLowerCase();
+  const members = [];
+  if (currentUser?.email) members.push(currentUser.email.toLowerCase());
+  if (partnerEmail) members.push(partnerEmail);
+
+  const pairKey = makePairKey(currentUser?.email, partnerEmail);
+
+  // Only auto-reuse an existing thread if we have a clear pair (both sides known)
+  let targetGameId = gameId;
+
+  if (pairKey) {
+    const existing = await findExistingGameForPair(pairKey);
+    if (existing) {
+      listenToGame(existing);
+      showGameScreen(existing);
+      return;
+    }
+  }
+
   gameState = {
     id: gameId,
     story: [],
@@ -217,32 +367,25 @@ function createNewGame() {
     loveMeter: 45,
     createdAt: Date.now(),
     bridgeIndex: 0,
-    bridgeAnswers: {}
+    bridgeAnswers: {},
+    members: members.length ? members : undefined,
+    pairKey: pairKey || undefined
   };
 
   ensureBridgeRole(gameId, true);
-  setDoc(doc(db, 'games', gameId), gameState)
-    .then(() => {
-      listenToGame(gameId);
-      showGameScreen(gameId);
-    })
-    .catch((e) => {
-      console.error('Create game failed:', e);
-      if (e && e.code === 'permission-denied') {
-        const rules = `rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /games/{gameId} {
-      allow read, write: if true;
+
+  try {
+    await setDoc(doc(db, 'games', gameId), gameState);
+    listenToGame(gameId);
+    showGameScreen(gameId);
+  } catch (e) {
+    console.error('Create game failed:', e);
+    if (e && e.code === 'permission-denied') {
+      alert('Permission denied. Check Firestore rules for games/invites.');
+    } else {
+      alert('Could not create game. See console.');
     }
   }
-}`;
-        console.log('%c[LoveWeave] Paste these Firestore rules:', 'color:#f99', rules);
-        alert('Permission denied (Firestore rules).\n\n1. Go to Firebase Console → Firestore Database → Rules\n2. Replace the rules with this and click Publish:\n\n' + rules);
-      } else {
-        alert('Could not create game. See console for the error.');
-      }
-    });
 }
 
 function joinGame() {
@@ -511,8 +654,16 @@ function ensureBridgeRole(gid, isCreator) {
 
 function changeBridgeIndex(delta) {
   if (!gameState.id) return;
+
+  const active = getActiveBridgeList();
+  const offset = active.offset;
+  const len = active.list.length;
+
   let idx = (gameState.bridgeIndex || 0) + delta;
-  idx = Math.max(0, Math.min(bridgeQuestions.length - 1, idx));
+
+  // Clamp inside active category range
+  idx = Math.max(offset, Math.min(offset + len - 1, idx));
+
   if (idx !== (gameState.bridgeIndex || 0)) {
     gameState.bridgeIndex = idx;
     saveToFirebase();
@@ -539,7 +690,21 @@ function saveBridgeAnswer() {
 
 function randomBridge() {
   if (!gameState.id) return;
-  const idx = Math.floor(Math.random() * bridgeQuestions.length);
+
+  const unanswered = getUnansweredIndices();
+
+  let idx;
+  if (unanswered.length > 0) {
+    // Pick random from unanswered
+    idx = unanswered[Math.floor(Math.random() * unanswered.length)];
+  } else {
+    // All answered in current category — pick any from the active list
+    const active = getActiveBridgeList();
+    const offset = active.offset;
+    const len = active.list.length;
+    idx = offset + Math.floor(Math.random() * len);
+  }
+
   gameState.bridgeIndex = idx;
   saveToFirebase();
   renderBridge();
@@ -557,10 +722,33 @@ function getActiveBridgeList() {
   if (currentBridgeCategory === 'all') return { list: allBridgeQuestions, offset: 0 };
   const catIdx = parseInt(currentBridgeCategory);
   if (!bridgeCategories[catIdx]) return { list: allBridgeQuestions, offset: 0 };
-  // compute absolute offset of this category
   let offset = 0;
   for (let i = 0; i < catIdx; i++) offset += bridgeCategories[i].questions.length;
   return { list: bridgeCategories[catIdx].questions, offset };
+}
+
+function getUnansweredIndices() {
+  const active = getActiveBridgeList();
+  const list = active.list;
+  const offset = active.offset;
+  const answers = gameState.bridgeAnswers || { a: {}, b: {} };
+  const myRole = getBridgeRoleForGame(gameState.id);
+  const partnerRole = myRole === 'a' ? 'b' : 'a';
+  const unanswered = [];
+  for (let i = 0; i < list.length; i++) {
+    const globalIdx = offset + i;
+    const myAns = answers[myRole] && answers[myRole][globalIdx];
+    const partnerAns = answers[partnerRole] && answers[partnerRole][globalIdx];
+    if (!myAns && !partnerAns) unanswered.push(globalIdx);
+  }
+  return unanswered;
+}
+
+function getRandomUnansweredIndex() {
+  const unanswered = getUnansweredIndices();
+  if (unanswered.length === 0) return null;
+  const rand = unanswered[Math.floor(Math.random() * unanswered.length)];
+  return rand;
 }
 
 function renderBridge() {
@@ -665,14 +853,36 @@ function handleAuthChange(user) {
   const choice = document.getElementById('auth-choice-screen');
   const landing = document.getElementById('landing-screen');
 
+  // Compact navbar user UI
+  const navbarUser = document.getElementById('navbar-user');
+  const navbarUserName = document.getElementById('navbar-user-name');
+  const navbarSignout = document.getElementById('navbar-signout-btn');
+
   if (user) {
     if (emailEl) emailEl.textContent = user.email || '';
+
+    // Hide big sign-in area on landing
     if (userInfo) userInfo.classList.remove('hidden');
     if (partnerTools) partnerTools.classList.remove('hidden');
-    if (authArea) authArea.classList.remove('hidden'); // keep visible for sign out button
+    if (authArea) authArea.classList.add('hidden');
 
-    ensureUserDoc(user);
-    loadPendingInvites(user);
+    // Navbar compact user
+    if (navbarUser) navbarUser.classList.remove('hidden');
+    if (navbarUserName) navbarUserName.textContent = user.displayName || user.email || 'You';
+
+    if (navbarSignout) {
+      navbarSignout.onclick = () => signOut(auth);
+    }
+
+    // Hide "Create New Game" when signed in with Gmail (email invites already available)
+    const createBtn = document.getElementById('create-game-btn');
+    if (createBtn) createBtn.classList.add('hidden');
+
+    ensureUserDoc(user).catch(err => {
+      console.error('ensureUserDoc failed:', err);
+    });
+    listenForMyInvites(user);
+    ensureQuestionsSeeded();
 
     // switch from choice to main landing
     if (choice) choice.classList.add('hidden');
@@ -681,6 +891,18 @@ function handleAuthChange(user) {
     if (userInfo) userInfo.classList.add('hidden');
     if (partnerTools) partnerTools.classList.add('hidden');
     if (authArea) authArea.classList.remove('hidden');
+
+    if (navbarUser) navbarUser.classList.add('hidden');
+    if (navbarSignout) navbarSignout.onclick = null;
+
+    // Show "Create New Game" for anonymous users
+    const createBtn = document.getElementById('create-game-btn');
+    if (createBtn) createBtn.classList.remove('hidden');
+
+    if (invitesUnsubscribe) {
+      invitesUnsubscribe();
+      invitesUnsubscribe = null;
+    }
   }
 }
 
@@ -743,47 +965,61 @@ async function invitePartnerByEmail() {
   showGameScreen(gameId);
 }
 
-async function loadPendingInvites(user) {
-  const section = document.getElementById('pending-section');
-  const list = document.getElementById('pending-list');
-  if (!section || !list || !user || !user.email) return;
+function listenForMyInvites(user) {
+  if (invitesUnsubscribe) {
+    invitesUnsubscribe();
+    invitesUnsubscribe = null;
+  }
 
-  list.innerHTML = '';
-  section.classList.add('hidden');
+  const listEl = document.getElementById('invitations-list');
+  if (!listEl || !user || !user.email) return;
 
+  const email = user.email.toLowerCase();
   const q = query(
     collection(db, 'invites'),
-    where('toEmail', '==', user.email.toLowerCase()),
+    where('toEmail', '==', email),
     where('status', '==', 'pending')
   );
 
-  const snap = await getDocs(q);
-  const items = [];
-  snap.forEach(d => items.push({ id: d.id, ...d.data() }));
+  invitesUnsubscribe = onSnapshot(q, (snapshot) => {
+    listEl.innerHTML = '';
 
-  if (items.length === 0) return;
+    const items = [];
+    snapshot.forEach(d => items.push({ id: d.id, ...d.data() }));
 
-  section.classList.remove('hidden');
+    if (items.length === 0) {
+      const none = document.createElement('div');
+      none.className = 'text-white/50 text-xs px-1 py-1';
+      none.textContent = 'No invitations yet';
+      listEl.appendChild(none);
+      return;
+    }
 
-  items.forEach(inv => {
-    const row = document.createElement('div');
-    row.className = 'flex items-center justify-between bg-white/5 px-3 py-2 rounded-2xl';
-    row.innerHTML = `
-      <div class="min-w-0">
-        <div class="text-[10px] text-white/60">From</div>
-        <div class="font-mono text-sm truncate">${inv.fromEmail}</div>
-      </div>
-      <button class="px-3 py-1 text-xs bg-emerald-600/80 active:bg-emerald-600 rounded-xl">Accept</button>
-    `;
-    const btn = row.querySelector('button');
-    btn.onclick = async () => {
-      btn.disabled = true;
-      await setDoc(doc(db, 'invites', inv.id), { ...inv, status: 'accepted' }, { merge: true });
-      listenToGame(inv.gameId);
-      showGameScreen(inv.gameId);
-      loadPendingInvites(user);
-    };
-    list.appendChild(row);
+    items.forEach(inv => {
+      const row = document.createElement('div');
+      row.className = 'flex items-center justify-between bg-white/5 px-3 py-2 rounded-2xl';
+      row.innerHTML = `
+        <div class="min-w-0">
+          <div class="text-[10px] text-white/60">From</div>
+          <div class="font-mono text-sm truncate">${inv.fromEmail || 'Unknown'}</div>
+        </div>
+        <button class="px-3 py-1 text-xs bg-emerald-600/80 active:bg-emerald-600 rounded-xl">Accept</button>
+      `;
+      const btn = row.querySelector('button');
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try {
+          await setDoc(doc(db, 'invites', inv.id), { ...inv, status: 'accepted' }, { merge: true });
+          listenToGame(inv.gameId);
+          showGameScreen(inv.gameId);
+        } catch (e) {
+          console.error(e);
+          alert('Failed to accept invitation.');
+          btn.disabled = false;
+        }
+      };
+      listEl.appendChild(row);
+    });
   });
 }
 
@@ -823,18 +1059,101 @@ function init() {
   const bta = document.getElementById('bridge-my-answer');
   if (bta) bta.onblur = saveBridgeAnswer;
 
-  // Bridge category filter
-  const catSel = document.getElementById('bridge-category');
-  if (catSel) {
-    catSel.innerHTML = `<option value="all">All questions</option>` +
-      bridgeCategories.map((c, i) => `<option value="${i}">${c.title} (${c.questions.length})</option>`).join('');
-    catSel.onchange = () => {
-      currentBridgeCategory = catSel.value;
-      // reset to first question of selected category
+  // Bridge category filter - custom dropdown
+  const catBtn = document.getElementById('bridge-category-btn');
+  const catMenu = document.getElementById('bridge-category-menu');
+  const catVal = document.getElementById('bridge-category-value');
+  const catHidden = document.getElementById('bridge-category');
+
+  if (catBtn && catMenu && catVal && catHidden) {
+    // Populate menu
+    catMenu.innerHTML = '';
+
+    const allOpt = document.createElement('div');
+    allOpt.className = 'bridge-cat-option px-4 py-2 hover:bg-white/10 cursor-pointer text-sm';
+    allOpt.textContent = 'All questions';
+    allOpt.onclick = () => {
+      currentBridgeCategory = 'all';
+      catHidden.value = 'all';
+      catVal.textContent = 'All questions';
+      catMenu.classList.add('hidden');
       gameState.bridgeIndex = 0;
       saveToFirebase();
       renderBridge();
     };
+    catMenu.appendChild(allOpt);
+
+    if (bridgeCategories && bridgeCategories.length) {
+      bridgeCategories.forEach((c, i) => {
+        const opt = document.createElement('div');
+        opt.className = 'bridge-cat-option px-4 py-2 hover:bg-white/10 cursor-pointer text-sm';
+        opt.textContent = `${c.title} (${c.questions.length})`;
+        opt.onclick = () => {
+          currentBridgeCategory = String(i);
+          catHidden.value = String(i);
+          catVal.textContent = `${c.title} (${c.questions.length})`;
+          catMenu.classList.add('hidden');
+          gameState.bridgeIndex = 0;
+          saveToFirebase();
+          renderBridge();
+        };
+        catMenu.appendChild(opt);
+      });
+    }
+
+    // Set initial display
+    currentBridgeCategory = catHidden.value || 'all';
+    if (currentBridgeCategory === 'all') {
+      catVal.textContent = 'All questions';
+    } else {
+      const cIdx = parseInt(currentBridgeCategory);
+      const c = (bridgeCategories || [])[cIdx];
+      if (c) catVal.textContent = `${c.title} (${c.questions.length})`;
+    }
+
+    catBtn.onclick = () => {
+      catMenu.classList.toggle('hidden');
+    };
+
+    // Close when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!catBtn.contains(e.target) && !catMenu.contains(e.target)) {
+        catMenu.classList.add('hidden');
+      }
+    });
+  }
+
+  // Story Tone - custom dropdown wiring
+  const toneBtn = document.getElementById('story-tone-btn');
+  const toneMenu = document.getElementById('story-tone-menu');
+  const toneVal = document.getElementById('story-tone-value');
+  const toneHidden = document.getElementById('story-tone');
+
+  if (toneBtn && toneMenu && toneVal && toneHidden) {
+    // Set initial display from hidden or default
+    const initVal = toneHidden.value || 'romantic';
+    const initOpt = toneMenu.querySelector(`[data-value="${initVal}"]`);
+    if (initOpt) toneVal.innerHTML = initOpt.innerHTML;
+
+    toneBtn.onclick = () => {
+      toneMenu.classList.toggle('hidden');
+    };
+
+    toneMenu.querySelectorAll('.tone-option').forEach(opt => {
+      opt.onclick = () => {
+        const val = opt.getAttribute('data-value');
+        toneHidden.value = val;
+        toneVal.innerHTML = opt.innerHTML;
+        toneMenu.classList.add('hidden');
+      };
+    });
+
+    // Close on outside click
+    document.addEventListener('click', (e) => {
+      if (!toneBtn.contains(e.target) && !toneMenu.contains(e.target)) {
+        toneMenu.classList.add('hidden');
+      }
+    });
   }
 
   // Help modal close buttons
@@ -869,6 +1188,10 @@ function init() {
   const inviteBtn = document.getElementById('invite-partner-btn');
   if (inviteBtn) inviteBtn.onclick = invitePartnerByEmail;
 
+  // "New Game" button inside an active game (bottom of game screen)
+  const newGameBottom = document.getElementById('new-game-bottom-btn');
+  if (newGameBottom) newGameBottom.onclick = forceNewGame;
+
   // Auto join from URL (classic Game ID path)
   const params = new URLSearchParams(window.location.search);
   const gameId = params.get('game');
@@ -884,6 +1207,10 @@ function init() {
 
   // Listen for auth state
   onAuthStateChanged(auth, handleAuthChange);
+
+  // Footer year (standardized)
+  const fy = document.getElementById('footer-year');
+  if (fy) fy.textContent = new Date().getFullYear();
 }
 
 window.switchTab = switchTab;

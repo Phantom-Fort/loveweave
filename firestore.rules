@@ -1,0 +1,46 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ======================
+    // GAMES (open as requested)
+    // ======================
+    match /games/{gameId} {
+      allow read, write: if true;
+    }
+
+    // ======================
+    // USERS (for email lookup when sending invites)
+    // ======================
+    match /users/{uid} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == uid;
+      allow update: if request.auth != null && request.auth.uid == uid;
+      allow delete: if false;
+    }
+
+    // ======================
+    // INVITES (for email invitations + in-app notifications)
+    // ======================
+    match /invites/{inviteId} {
+      allow create: if request.auth != null;
+      allow read: if request.auth != null &&
+        (resource.data.toEmail == request.auth.token.email ||
+         resource.data.fromUid == request.auth.uid);
+      allow update: if request.auth != null &&
+        resource.data.toEmail == request.auth.token.email;
+      allow delete: if false;
+    }
+
+    // ======================
+    // QUESTIONS (Bridge the Gap + Love Sparks / Daily Prompts)
+    // ======================
+    match /questions/{docId} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null;
+      allow delete: if false;
+    }
+
+  }
+}
