@@ -1,6 +1,6 @@
 import './style.css';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, query, where, getDocs, updateDoc } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, query, where, getDocs, updateDoc, addDoc } from 'firebase/firestore';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import { bridgeCategories, allBridgeQuestions } from './content.js';
 
@@ -27,6 +27,33 @@ let invitesUnsubscribe = null;
 let myThreadsUnsubscribe = null;
 let lastAcceptedThread = null; // for the "Continue last thread" quick button
 let threadsCollapsed = false;
+
+let prevGameState = {}; // for detecting partner changes for toasts
+let notificationPermissionAsked = false;
+let activeToasts = 0;
+
+// Robust formatter (defined early so renderAll never crashes on it)
+function formatLoveMeter(v) {
+  const n = parseFloat(v);
+  if (isNaN(n)) return '10.00';
+  if (n >= 100) return '100';
+  return n.toFixed(2);
+}
+
+// ==================== BADGE DEFINITIONS ====================
+// Updated to use the actual uploaded images in public/badges/
+const BADGES = [
+  { id: 'first-spark',      name: 'First Spark',      desc: '1 day streak',           icon: '🔥', minStreak: 1,  img: '/badges/first_spark.jpg' },
+  { id: 'consistent-heart', name: 'Consistent Heart', desc: '3 day streak',           icon: '❤️', minStreak: 3,  img: '/badges/consistent_heart.jpg' },
+  { id: 'weekly-weaver',    name: 'Weekly Weaver',    desc: '7 day streak',           icon: '🧵', minStreak: 7,  img: '/badges/weekly_weaver.jpg' },
+  { id: 'fortnight-flame',  name: 'Fortnight Flame',  desc: '14 day streak',          icon: '🌟', minStreak: 14, img: '/badges/fortnight_flame.jpg' },
+  { id: 'monthly-bond',     name: 'Monthly Bond',     desc: '30 day streak',          icon: '🌕', minStreak: 30, img: '/badges/Monthly_bond.jpg' },
+  { id: 'storyteller',      name: 'Storyteller',      desc: '10 stories shared',      icon: '📖', stories: 10,   img: '/badges/storyteller.jpg' },
+  { id: 'bridge-builder',   name: 'Bridge Builder',   desc: '50 questions answered',  icon: '🌉', bridge: 50,    img: '/badges/Bridge_builder.jpg' },
+  { id: 'note-keeper',      name: 'Note Keeper',      desc: '20 love notes',          icon: '✉️', notes: 20,     img: '/badges/Notekeeper.jpg' },
+  { id: 'heart-gardener',   name: 'Heart Gardener',   desc: 'Love meter reached 50',  icon: '🌱', meter: 50,     img: '/badges/heart_gardener.jpg' },
+  { id: 'perfect-weave',    name: 'Perfect Weave',    desc: 'Love meter reached 100', icon: '💯', meter: 100,    img: '/badges/perfect_weave.jpg' },
+];
 
 let myBridgeRole = 'a'; // 'a' for first/creator, 'b' for joiner. Persisted per game in localStorage.
 let currentBridgeCategory = 'all';
@@ -262,7 +289,7 @@ async function forceNewGame() {
     guesses: [],
     correctGuesses: 0,
     totalAnswered: 0,
-    loveMeter: 45,
+    loveMeter: 10,
     createdAt: Date.now(),
     bridgeIndex: 0,
     bridgeAnswers: {},
@@ -276,9 +303,22 @@ async function forceNewGame() {
     await setDoc(doc(db, 'games', gameId), gameState);
     listenToGame(gameId);
     showGameScreen(gameId);
+
+    // Send a fresh invite to the same partner for this new independent thread
+    if (currentPartner) {
+      await setDoc(doc(collection(db, 'invites')), {
+        fromUid: currentUser.uid,
+        fromEmail: (currentUser.email || '').toLowerCase(),
+        toEmail: currentPartner,
+        gameId,
+        status: 'pending',
+        createdAt: Date.now()
+      });
+      showToast('New thread created — invite sent to ' + currentPartner, 'invite');
+    }
   } catch (e) {
     console.error('forceNewGame failed:', e);
-    alert('Could not create a new game.');
+    showToast('Unable to create game. Please try again.', 'info');
   }
 }
 
@@ -310,7 +350,15 @@ function listenToGame(gameId) {
   currentGameUnsubscribe = onSnapshot(gameDoc, (snapshot) => {
     if (snapshot.exists()) {
       gameState = snapshot.data();
+
+      // Legacy flat daily fields are ignored; dailyHistory is authoritative.
       renderAll();
+      // Re-check penalties after any live update (e.g. partner just answered)
+      applyDailyCompliancePenalty();
+
+      // Toast only on partner-driven changes (self changes already toast locally)
+      detectPartnerToasts(prevGameState, gameState);
+      prevGameState = JSON.parse(JSON.stringify(gameState || {}));
     }
   }, (err) => {
     console.error('Snapshot error:', err);
@@ -367,12 +415,16 @@ async function createNewGame() {
     guesses: [],
     correctGuesses: 0,
     totalAnswered: 0,
-    loveMeter: 45,
+    loveMeter: 10,
     createdAt: Date.now(),
     bridgeIndex: 0,
     bridgeAnswers: {},
     members: members.length ? members : undefined,
-    pairKey: pairKey || undefined
+    pairKey: pairKey || undefined,
+    petNames: { a: '', b: '' },
+    petNameForPartner: { a: '', b: '' },
+    dailyPrompts: [],     // history of {id, prompt, answers: {a:'', b:''}, createdAt}
+    currentDailyId: null
   };
 
   ensureBridgeRole(gameId, true);
@@ -384,16 +436,16 @@ async function createNewGame() {
   } catch (e) {
     console.error('Create game failed:', e);
     if (e && e.code === 'permission-denied') {
-      alert('Permission denied. Check Firestore rules for games/invites.');
+      showToast('Something went wrong. Please try again.', 'info');
     } else {
-      alert('Could not create game. See console.');
+      showToast('Unable to create game. Please try again.', 'info');
     }
   }
 }
 
 function joinGame() {
   const gameId = document.getElementById('join-game-id').value.trim().toUpperCase();
-  if (!gameId) return alert("Please enter a Game ID");
+  if (!gameId) { showToast("Please enter a Game ID", 'info'); return; }
 
   getDoc(doc(db, 'games', gameId))
     .then(snapshot => {
@@ -402,30 +454,65 @@ function joinGame() {
         listenToGame(gameId);
         showGameScreen(gameId);
       } else {
-        alert("Game not found");
+        showToast("Game not found", 'info');
       }
     })
     .catch((e) => {
       console.error(e);
-      alert('Could not join game. Check your connection or Firestore rules.');
+      showToast('Unable to join game. Please try again.', 'info');
     });
 }
 
 function showGameScreen(gameId) {
-  document.getElementById('landing-screen').classList.add('hidden');
-  document.getElementById('game-screen').classList.remove('hidden');
+  // Aggressively show ONLY the game screen. Hide everything else.
+  const wait = document.getElementById('waiting-screen');
+  const landing = document.getElementById('landing-screen');
+  const choice = document.getElementById('auth-choice-screen');
+  const game = document.getElementById('game-screen');
+
+  if (wait) wait.classList.add('hidden');
+  if (landing) landing.classList.add('hidden');
+  if (choice) choice.classList.add('hidden');
+  if (game) game.classList.remove('hidden');
+
+  // Early hint so any post-auth logic sees a game is active
+  if (!gameState || typeof gameState !== 'object') gameState = {};
+  gameState.id = gameId;
+
   document.getElementById('game-id-display').textContent = gameId;
   renderAll();
 }
 
 // ==================== RENDER FUNCTIONS ====================
 function renderAll() {
-  document.getElementById('love-meter-value').textContent = gameState.loveMeter || 45;
+  recalculateLoveMeter();
+  document.getElementById('love-meter-value').textContent = formatLoveMeter(gameState.loveMeter);
+
+  const streakEl = document.getElementById('love-streak-badge');
+  if (streakEl) {
+    const s = getDailyStreak();
+    streakEl.textContent = s > 0 ? `${s}d` : '';
+    streakEl.style.display = s > 0 ? '' : 'none';
+  }
+
+  // Pet name inputs on landing have been removed. Pet names are now captured via the invite/accept modal only.
+
+  // Ensure there is always a daily prompt for today
+  ensureTodayDailyEntry();
+
+  // Apply daily response penalties if partner answered and I didn't (consecutive = exponential)
+  applyDailyCompliancePenalty();
+
+  // Check and award badges (streaks, volume, milestones)
+  checkAndAwardBadges();
+
   renderStory();
   renderPrompt();
   renderNotes();
   renderGuesses();
   renderBridge();
+  populatePastDailySelect();
+  renderBadges();
 }
 
 function renderStory() {
@@ -437,9 +524,13 @@ function renderStory() {
     return;
   }
 
+  const myRole = getBridgeRoleForGame(gameState.id);
+  const partnerRole = myRole === 'a' ? 'b' : 'a';
+
   gameState.story.forEach(entry => {
     const div = document.createElement('div');
-    div.className = 'p-4 rounded-2xl bg-white/5 border border-white/10';
+    const isMine = !!(entry.authorRole && entry.authorRole === myRole);
+    div.className = `p-4 rounded-2xl border ${isMine ? 'bg-pink-500/10 border-pink-400/30' : 'bg-sky-500/10 border-sky-400/30'}`;
     
     let icon = '';
     if (entry.tone === 'romantic') icon = '❤️';
@@ -448,10 +539,22 @@ function renderStory() {
     else if (entry.tone === 'spicy') icon = '🔥';
 
     const time = new Date(entry.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    
+
+    // Resolve display name correctly:
+    // - If I wrote it: use the name I chose for myself (petNameSelf)
+    // - If partner wrote it: use the name THEY chose for themselves (their petNameSelf)
+    let display = entry.author || 'You';
+    if (entry.authorRole) {
+      if (entry.authorRole === myRole) {
+        display = entry.petNameSelf || 'You';
+      } else {
+        display = entry.petNameSelf || 'Partner';   // partner's self-name
+      }
+    }
+
     div.innerHTML = `
       <div class="flex justify-between items-center mb-1.5">
-        <span class="font-semibold text-sm">${entry.author} ${icon}</span>
+        <span class="font-semibold text-sm">${display} ${icon}</span>
         <span class="text-xs text-white/50">${time}</span>
       </div>
       <p class="text-[15px]">${entry.text}</p>
@@ -462,12 +565,33 @@ function renderStory() {
 
 function renderPrompt() {
   const promptEl = document.getElementById('current-prompt');
-  promptEl.innerHTML = `"${gameState.currentPrompt || 'No prompt yet'}"`;
-  document.getElementById('my-answer').value = gameState.myAnswer || '';
 
+  const myRole = getBridgeRoleForGame(gameState.id);
+  const partnerRole = myRole === 'a' ? 'b' : 'a';
+
+  // Always ensure today's entry exists (one prompt per day)
+  const entry = ensureTodayDailyEntry();
+
+  // If user selected a past day via the selector, use that instead
+  const active = getActiveDailyEntry() || entry;
+
+  promptEl.innerHTML = `"${active.prompt || 'No prompt yet'}"`;
+
+  // My answer for the active day
+  const myAns = active.answers ? (active.answers[myRole] || '') : '';
+  document.getElementById('my-answer').value = myAns;
+
+  // Partner answer ONLY to partner block
   const partnerEl = document.getElementById('partner-answer-text');
-  if (gameState.partnerAnswer) {
-    partnerEl.textContent = gameState.partnerAnswer;
+  const partnerLabel = document.getElementById('partner-answer-label');
+  const partnerAns = active.answers ? (active.answers[partnerRole] || '') : '';
+
+  // Show the name the partner chose for themselves (what they want to be called)
+  const partnerSelfName = (active.petNames && active.petNames[partnerRole]) || getPartnerPetNameForMe() || 'Partner';
+  if (partnerLabel) partnerLabel.textContent = partnerSelfName;
+
+  if (partnerAns) {
+    partnerEl.textContent = partnerAns;
     partnerEl.classList.remove('italic');
   } else {
     partnerEl.textContent = "Your partner hasn't answered yet...";
@@ -484,13 +608,27 @@ function renderNotes() {
     return;
   }
 
+  const myRole = getBridgeRoleForGame(gameState.id);
+
   gameState.notes.slice().reverse().forEach(note => {
     const div = document.createElement('div');
-    div.className = 'p-4 rounded-2xl bg-white/5 border border-white/10';
+    const isMine = !!(note.authorRole && note.authorRole === myRole);
+    div.className = `p-4 rounded-2xl border ${isMine ? 'bg-pink-500/10 border-pink-400/30' : 'bg-sky-500/10 border-sky-400/30'}`;
     const time = new Date(note.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+    // Same rule as story: prefer the author's own self-name (petNameSelf)
+    let display = note.author || 'You';
+    if (note.authorRole) {
+      if (note.authorRole === myRole) {
+        display = note.petNameSelf || 'You';
+      } else {
+        display = note.petNameSelf || 'Partner';
+      }
+    }
+
     div.innerHTML = `
       <div class="flex justify-between text-xs mb-1">
-        <span class="font-medium text-pink-300">${note.author}</span>
+        <span class="font-medium text-pink-300">${display}</span>
         <span class="text-white/40">${time}</span>
       </div>
       <p>${note.text}</p>
@@ -518,12 +656,18 @@ function renderGuesses() {
 
   gameState.guesses.forEach(guess => {
     const div = document.createElement('div');
-    div.className = 'p-4 rounded-2xl bg-white/5 border border-white/10';
-
     const submitRole = guess.submittedByRole || null;
     const isMySubmission = submitRole ? (submitRole === myRole) : (guess.submittedBy === "You");
+    // re-compute for coloring (above line already sets isMySubmission)
+    const isMine = isMySubmission;
 
-    const submittedLabel = isMySubmission ? "You" : "Partner";
+    // Same rule: prefer the submitter's own self-name
+    let submittedLabel = isMySubmission ? "You" : "Partner";
+    if (isMySubmission) {
+      submittedLabel = guess.petNameSelf || getMyPetName() || "You";
+    } else {
+      submittedLabel = guess.petNameSelf || "Partner";   // partner's self-name
+    }
 
     let statusHTML = '';
     if (guess.status === "pending") {
@@ -570,17 +714,26 @@ function addStoryEntry() {
 
   if (!gameState.story) gameState.story = [];
 
+  const myRole = getBridgeRoleForGame(gameState.id);
+  const partnerRole = myRole === 'a' ? 'b' : 'a';
+
+  // Pet names are no longer captured from landing inputs (removed). They come from invite/accept modals.
+
   gameState.story.push({
     id: Date.now(),
     author: "You",
+    authorRole: myRole,
+    petNameSelf: getMyPetName(),
+    petNameForPartner: getPetNameIUseForPartner(),
     text: text,
     tone: document.getElementById('story-tone').value,
     timestamp: new Date().toISOString()
   });
 
-  gameState.loveMeter = Math.min(100, (gameState.loveMeter || 45) + 5);
+  gameState.loveMeter = Math.min(100, (gameState.loveMeter || 10) + 5);
   document.getElementById('story-input').value = '';
   saveToFirebase();
+  // No self-toast here — only the partner should see a notification ("Partner added to the story")
   renderAll();
 }
 
@@ -588,10 +741,30 @@ function submitMyAnswer() {
   const answer = document.getElementById('my-answer').value.trim();
   if (!answer) return;
 
+  const myRole = getBridgeRoleForGame(gameState.id);
+  const partnerRole = myRole === 'a' ? 'b' : 'a';
+
   gameState.myAnswer = answer;
-  gameState.loveMeter = Math.min(100, (gameState.loveMeter || 45) + 8);
+  gameState.loveMeter = Math.min(100, (gameState.loveMeter || 10) + 8);
+
+  // Ensure pet name maps
+  if (!gameState.petNames) gameState.petNames = { a: '', b: '' };
+  if (!gameState.petNameForPartner) gameState.petNameForPartner = { a: '', b: '' };
+
+  // Always target the active day (today or the one selected in the dropdown)
+  const active = getActiveDailyEntry() || ensureTodayDailyEntry();
+  if (active) {
+    active.answers[myRole] = answer;
+    active.petNames = active.petNames || {};
+    active.petNames[myRole] = getMyPetName();
+    active.petNameForPartner = active.petNameForPartner || {};
+    active.petNameForPartner[myRole] = getPetNameIUseForPartner();
+  }
+
   saveToFirebase();
+  showToast('Daily answer saved', 'success');
   renderPrompt();
+  populatePastDailySelect();
 }
 
 function addLoveNote() {
@@ -600,16 +773,24 @@ function addLoveNote() {
 
   if (!gameState.notes) gameState.notes = [];
 
+  const myRole = getBridgeRoleForGame(gameState.id);
+
+  // Pet names are captured via modals only (landing inputs removed).
+
   gameState.notes.push({
     id: Date.now(),
     author: "You",
+    authorRole: myRole,
+    petNameSelf: getMyPetName(),
+    petNameForPartner: getPetNameIUseForPartner(),
     text: text,
     timestamp: new Date().toISOString()
   });
 
-  gameState.loveMeter = Math.min(100, (gameState.loveMeter || 45) + 4);
+  gameState.loveMeter = Math.min(100, (gameState.loveMeter || 10) + 4);
   document.getElementById('note-input').value = '';
   saveToFirebase();
+  showToast('Love note sent', 'success');
   renderNotes();
 }
 
@@ -625,12 +806,15 @@ function addGuess() {
     id: Date.now(),
     text: text,
     submittedByRole: myRole,
+    petNameSelf: getMyPetName(),
+    petNameForPartner: getPetNameIUseForPartner(),
     status: "pending"
   });
 
-  gameState.loveMeter = Math.min(100, (gameState.loveMeter || 45) + 3);
+  gameState.loveMeter = Math.min(100, (gameState.loveMeter || 10) + 3);
   input.value = '';
   saveToFirebase();
+  showToast('Guess submitted', 'success');
   renderGuesses();
 }
 
@@ -656,21 +840,26 @@ function answerGuess(guessId, isTrue) {
   gameState.totalAnswered = (gameState.totalAnswered || 0) + 1;
   if (isTrue) {
     gameState.correctGuesses = (gameState.correctGuesses || 0) + 1;
-    gameState.loveMeter = Math.min(100, (gameState.loveMeter || 45) + 6);
+    gameState.loveMeter = Math.min(100, (gameState.loveMeter || 10) + 6);
   } else {
-    gameState.loveMeter = Math.min(100, (gameState.loveMeter || 45) + 2);
+    gameState.loveMeter = Math.min(100, (gameState.loveMeter || 10) + 2);
   }
 
   saveToFirebase();
+  showToast('Guess answered', 'success');
   renderGuesses();
 }
 
 function getNewPrompt() {
-  gameState.currentPrompt = promptsPool[Math.floor(Math.random() * promptsPool.length)];
+  // "New" button replaces today's prompt (user explicitly wants a different one today)
+  const todayEntry = ensureTodayDailyEntry();
+  todayEntry.prompt = promptsPool[Math.floor(Math.random() * promptsPool.length)];
+  gameState.currentPrompt = todayEntry.prompt;
   gameState.myAnswer = '';
   gameState.partnerAnswer = '';
   saveToFirebase();
   renderPrompt();
+  populatePastDailySelect();
 }
 
 // ==================== BRIDGE THE GAP ====================
@@ -678,6 +867,318 @@ function getBridgeRoleForGame(gid) {
   if (!gid) return 'a';
   const key = `bridgeRole_${gid}`;
   return localStorage.getItem(key) || 'a';
+}
+
+function getMyPetName() {
+  const role = getBridgeRoleForGame(gameState.id);
+  return (gameState.petNames && gameState.petNames[role]) || '';
+}
+
+function getPetNameIUseForPartner() {
+  const role = getBridgeRoleForGame(gameState.id);
+  return (gameState.petNameForPartner && gameState.petNameForPartner[role]) || '';
+}
+
+function getPartnerPetNameForMe() {
+  const role = getBridgeRoleForGame(gameState.id);
+  const partnerRole = role === 'a' ? 'b' : 'a';
+  return (gameState.petNames && gameState.petNames[partnerRole]) || '';
+}
+
+function getTodayStr() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+function dateMinusDays(dateStr, days) {
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() - days);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+function applyDailyCompliancePenalty() {
+  if (!gameState.dailyHistory) gameState.dailyHistory = [];
+  const myRole = getBridgeRoleForGame(gameState.id);
+  const partnerRole = myRole === 'a' ? 'b' : 'a';
+
+  const today = getTodayStr();
+
+  // Consider the last 7 days (including today)
+  let consecutiveMisses = 0;
+  for (let i = 1; i <= 7; i++) {
+    const d = dateMinusDays(today, i);
+    const e = gameState.dailyHistory.find(x => x.date === d);
+    const partnerAnswered = e && e.answers && e.answers[partnerRole];
+    const iAnswered = e && e.answers && e.answers[myRole];
+    if (partnerAnswered && !iAnswered) {
+      consecutiveMisses++;
+    } else {
+      break; // streak broken
+    }
+  }
+
+  if (consecutiveMisses > 0) {
+    // exponential: 2, 4, 8, ...
+    const penalty = 2 * Math.pow(2, consecutiveMisses - 1);
+    const before = gameState.loveMeter || 10;
+    gameState.loveMeter = Math.max(0, before - penalty);
+    if (gameState.loveMeter !== before && gameState.id) {
+      setDoc(doc(db, 'games', gameState.id), gameState, { merge: true }).catch(() => {});
+    }
+  }
+}
+
+function getDailyStreak() {
+  if (!gameState.dailyHistory) return 0;
+  const myRole = getBridgeRoleForGame(gameState.id);
+  let streak = 0;
+  let d = getTodayStr();
+  for (let i = 0; i < 30; i++) {
+    const entry = gameState.dailyHistory.find(e => e.date === d);
+    if (entry && entry.answers && entry.answers[myRole]) {
+      streak++;
+      d = dateMinusDays(d, 1);
+    } else {
+      break;
+    }
+  }
+  return streak;
+}
+
+function recalculateLoveMeter() {
+  const streak = getDailyStreak();
+
+  // Base from streak: exactly 10 consecutive days to unlock the final push to 100
+  let fromStreak = Math.min(81, streak * 8.1);
+
+  // Volume contributions (stories, bridge answers, notes, guesses)
+  const storyCount = (gameState.story || []).length;
+  const bridgeCount = countBridgeAnswered();
+  const noteCount = (gameState.notes || []).length;
+  const guessCount = (gameState.guesses || []).length;
+
+  let volume = 0;
+  volume += Math.min(6, storyCount * 0.5);
+  volume += Math.min(7, bridgeCount * 0.1);
+  volume += Math.min(3, noteCount * 0.2);
+  volume += Math.min(3, guessCount * 0.15);
+
+  // Milestones (small one-time style bumps via counts)
+  if (storyCount >= 10) volume += 1;
+  if (bridgeCount >= 50) volume += 2;
+  if (noteCount >= 20) volume += 1;
+
+  let meter = 10 + fromStreak + volume;
+
+  // Hard cap rule: cannot hit 100 until 10 consecutive days
+  if (streak < 10) {
+    meter = Math.min(99.99, meter);
+  } else {
+    meter = Math.min(100, meter);
+  }
+
+  meter = Math.max(10, meter);
+  gameState.loveMeter = meter;
+}
+
+function checkAndAwardBadges() {
+  if (!gameState.badges) gameState.badges = [];
+
+  const streak = getDailyStreak();
+  const storyCount = (gameState.story || []).length;
+  const bridgeCount = countBridgeAnswered();
+  const noteCount = (gameState.notes || []).length;
+  const meter = gameState.loveMeter || 10;
+
+  const newlyEarned = [];
+
+  BADGES.forEach(badge => {
+    let qualifies = false;
+
+    if (badge.minStreak && streak >= badge.minStreak) qualifies = true;
+    if (badge.stories && storyCount >= badge.stories) qualifies = true;
+    if (badge.bridge && bridgeCount >= badge.bridge) qualifies = true;
+    if (badge.notes && noteCount >= badge.notes) qualifies = true;
+    if (badge.meter && meter >= badge.meter) qualifies = true;
+
+    if (qualifies && !gameState.badges.includes(badge.id)) {
+      gameState.badges.push(badge.id);
+      newlyEarned.push(badge);
+    }
+  });
+
+  if (newlyEarned.length > 0) {
+    saveToFirebase();
+    newlyEarned.forEach(badge => {
+      showBadgeUnlock(badge);
+    });
+  }
+}
+
+function renderBadges() {
+  const container = document.getElementById('badges-display');
+  if (!container) return;
+
+  container.innerHTML = '';
+
+  const earned = (gameState.badges || []).map(id => BADGES.find(b => b.id === id)).filter(Boolean);
+
+  if (earned.length === 0) {
+    const span = document.createElement('span');
+    span.className = 'text-[9px] px-1 py-0.5 rounded bg-white/5 text-white/40';
+    span.textContent = 'No badges';
+    container.appendChild(span);
+    return;
+  }
+
+  earned.forEach(b => {
+    const el = document.createElement('span');
+    el.className = 'inline-flex items-center gap-1 px-1.5 py-0.5 bg-white/10 hover:bg-white/15 rounded text-[10px] cursor-default';
+    el.title = b.desc;
+    const iconHTML = b.img
+      ? `<img src="${b.img}" class="w-3 h-3 rounded" onerror="this.outerHTML='${b.icon}'" alt="" />`
+      : b.icon;
+    el.innerHTML = `${iconHTML} <span class="hidden md:inline">${b.name}</span>`;
+    container.appendChild(el);
+  });
+}
+
+function countBridgeAnswered() {
+  if (!gameState.bridgeAnswers) return 0;
+  const a = gameState.bridgeAnswers.a || {};
+  const b = gameState.bridgeAnswers.b || {};
+  return new Set([...Object.keys(a), ...Object.keys(b)]).size;
+}
+
+function detectPartnerToasts(prev, curr) {
+  if (!curr || !curr.id) return;
+  if (!prev || !prev.id || prev.id !== curr.id) return;
+
+  const myRole = getBridgeRoleForGame(curr.id);
+  const partnerRole = myRole === 'a' ? 'b' : 'a';
+
+  // Story by partner
+  const pStory = (prev.story || []).length;
+  const cStory = (curr.story || []).length;
+  if (cStory > pStory) {
+    const last = curr.story[cStory - 1];
+    if (last && last.authorRole && last.authorRole !== myRole) {
+      showToast('Partner added to the story', 'info');
+    }
+  }
+
+  // Note by partner
+  const pNotes = (prev.notes || []).length;
+  const cNotes = (curr.notes || []).length;
+  if (cNotes > pNotes) {
+    const last = curr.notes[cNotes - 1];
+    if (last && last.authorRole && last.authorRole !== myRole) {
+      showToast('Partner sent a love note', 'info');
+    }
+  }
+
+  // Guess submitted by partner
+  const pGuesses = (prev.guesses || []).length;
+  const cGuesses = (curr.guesses || []).length;
+  if (cGuesses > pGuesses) {
+    const last = curr.guesses[cGuesses - 1];
+    if (last && last.submittedByRole && last.submittedByRole !== myRole) {
+      showToast('Partner made a new guess', 'info');
+    }
+  }
+
+  // Daily spark answered by partner (any day in history)
+  const pDaily = prev.dailyHistory || [];
+  const cDaily = curr.dailyHistory || [];
+  cDaily.forEach(e => {
+    const old = pDaily.find(x => x.date === e.date);
+    const hadPartner = old && old.answers && old.answers[partnerRole];
+    const nowPartner = e.answers && e.answers[partnerRole];
+    if (!hadPartner && nowPartner) {
+      showToast('Partner answered a daily spark', 'info');
+    }
+  });
+
+  // Bridge answers by partner (new or updated)
+  const pBridge = (prev.bridgeAnswers && prev.bridgeAnswers[partnerRole]) || {};
+  const cBridge = (curr.bridgeAnswers && curr.bridgeAnswers[partnerRole]) || {};
+  let bridgeChanged = false;
+  Object.keys(cBridge).forEach(k => {
+    if (cBridge[k] && cBridge[k] !== pBridge[k]) bridgeChanged = true;
+  });
+  if (bridgeChanged || Object.keys(cBridge).length > Object.keys(pBridge).length) {
+    showToast('Partner updated a Bridge answer', 'info');
+  }
+}
+
+let currentSelectedDailyDate = null;
+
+function ensureTodayDailyEntry() {
+  if (!gameState.dailyHistory) gameState.dailyHistory = [];
+  const today = getTodayStr();
+  let entry = gameState.dailyHistory.find(e => e.date === today);
+  if (!entry) {
+    entry = {
+      date: today,
+      prompt: promptsPool[Math.floor(Math.random() * promptsPool.length)],
+      answers: { a: '', b: '' },
+      petNames: { a: '', b: '' },
+      petNameForPartner: { a: '', b: '' },
+      createdAt: Date.now()
+    };
+    gameState.dailyHistory.push(entry);
+  }
+  gameState.currentPrompt = entry.prompt;
+  gameState.currentDailyDate = today;
+  return entry;
+}
+
+function getActiveDailyEntry() {
+  if (!gameState.dailyHistory) gameState.dailyHistory = [];
+  const targetDate = currentSelectedDailyDate || getTodayStr();
+  let entry = gameState.dailyHistory.find(e => e.date === targetDate);
+  if (!entry && targetDate === getTodayStr()) {
+    entry = ensureTodayDailyEntry();
+  }
+  return entry;
+}
+
+// dailyHistory is the single source for per-day prompts now.
+// dailyPrompts left for backward data if any, but we prioritize dailyHistory.
+
+function populatePastDailySelect() {
+  const sel = document.getElementById('past-daily-select');
+  if (!sel) return;
+
+  const myRole = getBridgeRoleForGame(gameState.id);
+  const partnerRole = myRole === 'a' ? 'b' : 'a';
+
+  sel.innerHTML = '<option value="">Choose from past days</option>';
+
+  if (!gameState.dailyHistory || gameState.dailyHistory.length === 0) return;
+
+  // Only days where partner has answered
+  const answered = gameState.dailyHistory.filter(e => e.answers && e.answers[partnerRole]);
+
+  answered.slice().reverse().forEach(e => {
+    const opt = document.createElement('option');
+    opt.value = e.date;
+    const short = (e.prompt || '').slice(0, 55) + ((e.prompt || '').length > 55 ? '…' : '');
+    opt.textContent = `${e.date} — ${short}`;
+    if (currentSelectedDailyDate === e.date) opt.selected = true;
+    sel.appendChild(opt);
+  });
+
+  sel.onchange = () => {
+    const date = sel.value;
+    if (!date) {
+      currentSelectedDailyDate = null;
+    } else {
+      currentSelectedDailyDate = date;
+    }
+    // render will pick the right day via getActiveDailyEntry
+    renderPrompt();
+  };
 }
 
 function ensureBridgeRole(gid, isCreator) {
@@ -720,11 +1221,21 @@ function saveBridgeAnswer() {
   if (!gameState.bridgeAnswers) gameState.bridgeAnswers = { a: {}, b: {} };
   const role = getBridgeRoleForGame(gameState.id);
   if (!gameState.bridgeAnswers[role]) gameState.bridgeAnswers[role] = {};
+
+  const wasUpdate = !!gameState.bridgeAnswers[role][idx];
+
   gameState.bridgeAnswers[role][idx] = text;
 
   gameState.loveMeter = Math.min(100, (gameState.loveMeter || 45) + 2);
   saveToFirebase();
+
+  // Clear the input field after submission — answers should not remain in the input
+  ta.value = '';
+
   renderBridge();
+
+  // Local confirmation
+  showToast(wasUpdate ? 'Bridge answer updated' : 'Bridge answer saved', 'success');
 }
 
 function randomBridge() {
@@ -819,7 +1330,7 @@ function renderBridge() {
   const localIdx = idx - offset;
   qEl.textContent = activeList[localIdx] || allBridgeQuestions[idx];
 
-  progEl.textContent = `Q ${localIdx + 1} / ${activeList.length}`;
+  if (progEl) progEl.textContent = `Q ${localIdx + 1} / ${activeList.length}`;
 
   const answers = gameState.bridgeAnswers || { a: {}, b: {} };
   const myRole = getBridgeRoleForGame(gameState.id);
@@ -829,8 +1340,10 @@ function renderBridge() {
   if (myTa) myTa.value = myAns;
 
   const partnerAns = (answers[partnerRole] && answers[partnerRole][idx]) || "Waiting for partner...";
-  paEl.textContent = partnerAns;
-  paEl.classList.toggle('italic', !answers[partnerRole] || !answers[partnerRole][idx]);
+  if (paEl) {
+    paEl.textContent = partnerAns;
+    paEl.classList.toggle('italic', !answers[partnerRole] || !answers[partnerRole][idx]);
+  }
 
   // completed count (any side answered in current active list)
   let completed = 0;
@@ -839,7 +1352,7 @@ function renderBridge() {
   for (let i = offset; i < offset + activeList.length; i++) {
     if (aAns[i] || bAns[i]) completed++;
   }
-  compEl.textContent = `${completed} answered`;
+  if (compEl) compEl.textContent = `${completed} answered`;
 }
 
 // ==================== TAB SWITCHING ====================
@@ -871,18 +1384,258 @@ function hideHelp() {
   if (modal) modal.classList.add('hidden');
 }
 
+// Pet name prompt shown when clicking Invite (for sender) or Accept (for receiver)
+function askForPetName(title = 'Set your pet name', desc = 'This is the name your partner will see for you.') {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('petname-modal');
+    const titleEl = document.getElementById('petname-modal-title');
+    const descEl = document.getElementById('petname-modal-desc');
+    const input = document.getElementById('petname-modal-input');
+    const skipBtn = document.getElementById('petname-modal-skip');
+    const saveBtn = document.getElementById('petname-modal-save');
+
+    if (!modal || !input || !skipBtn || !saveBtn) {
+      // Modal not present — fall back to empty name (non-blocking)
+      resolve('');
+      return;
+    }
+
+    if (titleEl) titleEl.textContent = title;
+    if (descEl) descEl.textContent = desc;
+    input.value = '';
+
+    modal.classList.remove('hidden');
+    setTimeout(() => { try { input.focus(); input.select(); } catch (_) {} }, 30);
+
+    let resolved = false;
+    const finish = (val) => {
+      if (resolved) return;
+      resolved = true;
+      modal.classList.add('hidden');
+      cleanup();
+      resolve(val);
+    };
+
+    const onSkip = () => finish('');
+    const onSave = () => {
+      const v = (input.value || '').trim();
+      finish(v);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); onSave(); }
+      if (e.key === 'Escape') { e.preventDefault(); finish(null); } // full cancel
+    };
+
+    const cleanup = () => {
+      skipBtn.removeEventListener('click', onSkip);
+      saveBtn.removeEventListener('click', onSave);
+      input.removeEventListener('keydown', onKey);
+      modal.onclick = null;
+    };
+
+    skipBtn.addEventListener('click', onSkip, { once: true });
+    saveBtn.addEventListener('click', onSave, { once: true });
+    input.addEventListener('keydown', onKey);
+
+    // Click outside to cancel
+    modal.onclick = (e) => {
+      if (e.target === modal) finish(null);
+    };
+  });
+}
+
+function showAuthChoiceScreen() {
+  // Use the centralized refresher so we never leave the UI blank
+  showPostAuthScreen();
+
+  // Also ensure we clean up listeners and state when forcing to auth choice
+  if (currentGameUnsubscribe) {
+    currentGameUnsubscribe();
+    currentGameUnsubscribe = null;
+  }
+  // Only clear gameState if we're not keeping an active game
+  if (!gameState || !gameState.id) {
+    gameState = {};
+  }
+}
+
+// ==================== TOAST SYSTEM ====================
+function showToast(message, type = 'info', duration = 1500) {
+  const container = document.getElementById('toast-container');
+  const backdrop = document.getElementById('toast-backdrop');
+  if (!container) return;
+
+  // Show backdrop blur when first toast appears
+  if (backdrop) {
+    if (activeToasts === 0) backdrop.classList.remove('hidden');
+    activeToasts++;
+  }
+
+  const toast = document.createElement('div');
+  toast.className = `pointer-events-auto flex items-center gap-x-3 px-4 py-3 rounded-2xl border text-sm shadow-2xl max-w-[320px] bg-[#1f1a27] border-white/10`;
+
+  let iconHTML = `<img src="/logo.png" class="w-6 h-6 rounded-lg object-cover ring-1 ring-white/20" alt="" />`;
+
+  if (type === 'success') {
+    toast.classList.add('!border-emerald-400/30');
+    iconHTML = `<div class="w-6 h-6 rounded-lg bg-emerald-500/20 flex items-center justify-center"><i class="fa-solid fa-check text-emerald-400 text-xs"></i></div>`;
+  } else if (type === 'milestone') {
+    toast.classList.add('!border-pink-400/30');
+    iconHTML = `<img src="/logo.png" class="w-6 h-6 rounded-lg object-cover ring-1 ring-pink-400/30" alt="" />`;
+  } else if (type === 'invite') {
+    toast.classList.add('!border-sky-400/30');
+    iconHTML = `<img src="/logo.png" class="w-6 h-6 rounded-lg object-cover ring-1 ring-sky-400/30" alt="" />`;
+  }
+
+  toast.innerHTML = `
+    <div class="flex items-center gap-x-3">
+      ${iconHTML}
+      <div class="text-white/90">${message}</div>
+    </div>
+  `;
+
+  container.appendChild(toast);
+
+  const cleanup = () => {
+    toast.remove();
+    if (backdrop) {
+      activeToasts = Math.max(0, activeToasts - 1);
+      if (activeToasts === 0) backdrop.classList.add('hidden');
+    }
+  };
+
+  // Auto dismiss
+  setTimeout(() => {
+    toast.style.transition = 'all 0.2s ease';
+    toast.style.opacity = '0';
+    setTimeout(cleanup, 150);
+  }, duration);
+
+  // Click to dismiss
+  toast.onclick = cleanup;
+}
+
+// Confirmation toast with action buttons (used for End Game verification)
+function showConfirmToast(message, onConfirm, onCancel) {
+  const container = document.getElementById('toast-container');
+  const backdrop = document.getElementById('toast-backdrop');
+  if (!container) return;
+
+  if (backdrop) {
+    if (activeToasts === 0) backdrop.classList.remove('hidden');
+    activeToasts++;
+  }
+
+  const toast = document.createElement('div');
+  toast.className = `pointer-events-auto px-4 py-3 rounded-2xl border text-sm shadow-2xl max-w-[320px] bg-[#1f1a27] border-white/10`;
+
+  toast.innerHTML = `
+    <div class="text-white/90 mb-2">${message}</div>
+    <div class="flex gap-2">
+      <button class="flex-1 py-1.5 bg-red-600/80 active:bg-red-600 rounded-xl text-xs">End Game</button>
+      <button class="flex-1 py-1.5 bg-white/10 active:bg-white/20 rounded-xl text-xs">Cancel</button>
+    </div>
+  `;
+
+  container.appendChild(toast);
+
+  const cleanup = () => {
+    toast.remove();
+    if (backdrop) {
+      activeToasts = Math.max(0, activeToasts - 1);
+      if (activeToasts === 0) backdrop.classList.add('hidden');
+    }
+  };
+
+  const [confirmBtn, cancelBtn] = toast.querySelectorAll('button');
+
+  confirmBtn.onclick = () => {
+    cleanup();
+    if (onConfirm) onConfirm();
+  };
+  cancelBtn.onclick = () => {
+    cleanup();
+    if (onCancel) onCancel();
+  };
+}
+
+// Dedicated badge unlock toast that prominently shows the actual badge image
+function showBadgeUnlock(badge) {
+  const container = document.getElementById('toast-container');
+  const backdrop = document.getElementById('toast-backdrop');
+  if (!container) return;
+
+  if (backdrop) {
+    if (activeToasts === 0) backdrop.classList.remove('hidden');
+    activeToasts++;
+  }
+
+  const toast = document.createElement('div');
+  toast.className = `pointer-events-auto flex items-start gap-x-3 px-4 py-3.5 rounded-2xl border text-sm shadow-2xl max-w-[340px] bg-[#1f1a27] border-pink-400/40`;
+
+  const imgHTML = badge.img
+    ? `<img src="${badge.img}" class="w-14 h-14 rounded-2xl object-cover ring-1 ring-white/20 flex-shrink-0" onerror="this.outerHTML='<div class=\\'w-14 h-14 rounded-2xl bg-white/10 flex items-center justify-center text-2xl\\'>${badge.icon}</div>'" alt="" />`
+    : `<div class="w-14 h-14 rounded-2xl bg-white/10 flex items-center justify-center text-2xl flex-shrink-0">${badge.icon}</div>`;
+
+  toast.innerHTML = `
+    <div class="flex items-start gap-x-3">
+      ${imgHTML}
+      <div class="min-w-0 pt-0.5">
+        <div class="text-pink-300 font-semibold text-xs tracking-wide">BADGE UNLOCKED</div>
+        <div class="text-white font-semibold">${badge.name}</div>
+        <div class="text-white/75 text-xs mt-0.5">${badge.desc}</div>
+      </div>
+    </div>
+  `;
+
+  container.appendChild(toast);
+
+  const cleanup = () => {
+    toast.remove();
+    if (backdrop) {
+      activeToasts = Math.max(0, activeToasts - 1);
+      if (activeToasts === 0) backdrop.classList.add('hidden');
+    }
+  };
+
+  setTimeout(() => {
+    toast.style.transition = 'all 0.25s ease';
+    toast.style.opacity = '0';
+    setTimeout(cleanup, 180);
+  }, 1500);
+
+  toast.onclick = cleanup;
+}
+
+// Request notification permission (non-blocking). Toasts are ALWAYS the in-app centered UI, never browser/system alerts.
+function requestNotificationPermissionOnce() {
+  if (notificationPermissionAsked) return;
+  notificationPermissionAsked = true;
+  try {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+  } catch (_) {}
+}
+
 // ==================== AUTH (Gmail only) ====================
 async function signInWithGoogle() {
   try {
     await signInWithPopup(auth, googleProvider);
+    // Ask once for notification permission (used for real notifications if desired later; toasts remain in-app)
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
   } catch (e) {
     console.error(e);
-    alert('Google sign in failed. ' + (e?.message || ''));
+    showToast('Sign in failed. Please try again.', 'info');
   }
 }
 
 function handleAuthChange(user) {
   currentUser = user;
+  // Ask for notification permission (non-blocking). Toasts are always the in-app centered UI.
+  requestNotificationPermissionOnce();
 
   const authArea = document.getElementById('auth-area');
   const userInfo = document.getElementById('user-info');
@@ -910,19 +1663,24 @@ function handleAuthChange(user) {
     if (navbarUserName) navbarUserName.textContent = user.displayName || user.email || 'You';
 
     if (navbarSignout) {
-      navbarSignout.onclick = () => signOut(auth);
+      navbarSignout.onclick = async () => {
+        try { await signOut(auth); } catch (_) {}
+        showAuthChoiceScreen();
+      };
     }
 
     // Hide "Create New Game" when signed in with Gmail (email invites already available)
     const createBtn = document.getElementById('create-game-btn');
     if (createBtn) createBtn.classList.add('hidden');
 
-    ensureUserDoc(user).catch(err => {
-      console.error('ensureUserDoc failed:', err);
-    });
+    // ensureUserDoc skipped to avoid permission-denied noise on /users (non-critical).
+    // If you need user profiles, deploy updated rules and re-enable.
     listenForMyInvites(user);
     listenForMyAcceptedThreads(user);
     ensureQuestionsSeeded();
+
+    // Ask for notification permission (once) after sign-in; toasts remain the centered in-app UI
+    requestNotificationPermissionOnce();
 
     // switch from choice to main landing
     if (choice) choice.classList.add('hidden');
@@ -1188,62 +1946,79 @@ function applyThreadsCollapse() {
 }
 
 async function ensureUserDoc(user) {
-  if (!user) return;
+  if (!user || !user.uid) return;
   const uref = doc(db, 'users', user.uid);
-  const snap = await getDoc(uref);
-  if (!snap.exists()) {
-    await setDoc(uref, {
-      uid: user.uid,
-      email: user.email || '',
-      createdAt: Date.now()
-    });
+  try {
+    const snap = await getDoc(uref);
+    if (!snap.exists()) {
+      await setDoc(uref, {
+        uid: user.uid,
+        email: user.email || '',
+        createdAt: Date.now()
+      });
+    }
+  } catch (err) {
+    // Silently ignore permission-denied (common before rules are deployed or in transient auth state).
+    // User doc is optional metadata; app continues without it.
+    if (err && err.code !== 'permission-denied') {
+      console.warn('ensureUserDoc non-fatal:', err?.message || err);
+    }
   }
 }
 
 async function invitePartnerByEmail() {
-  if (!currentUser) return alert('Please sign in first to invite by email.');
+  if (!currentUser) { showToast('Please sign in first to invite by email.', 'info'); return; }
   const input = document.getElementById('partner-email');
   if (!input) return;
   const email = (input.value || '').trim().toLowerCase();
-  if (!email) return alert('Enter a Gmail address.');
+  if (!email) { showToast('Enter a Gmail address.', 'info'); return; }
 
-  // Create a fresh game for the thread
-  const gameId = generateGameId();
-  const newState = {
-    id: gameId,
-    story: [],
-    currentPrompt: promptsPool[Math.floor(Math.random() * promptsPool.length)],
-    myAnswer: '',
-    partnerAnswer: '',
-    notes: [],
-    guesses: [],
-    correctGuesses: 0,
-    totalAnswered: 0,
-    loveMeter: 45,
-    createdAt: Date.now(),
-    bridgeIndex: 0,
-    bridgeAnswers: {},
-    members: [currentUser.email || '', email]
-  };
+  // Ask for the inviter's pet name (what they want to be called) before sending.
+  const mySelfPet = await askForPetName('Set your pet name', 'This is the name your partner will see for you.');
+  if (mySelfPet === null) {
+    // User cancelled the whole invite
+    return;
+  }
 
-  await setDoc(doc(db, 'games', gameId), newState);
+  // Check if we already have an active thread with this exact person
+  const pairKey = makePairKey(currentUser.email, email);
+  if (pairKey) {
+    const existingGameId = await findExistingGameForPair(pairKey);
+    if (existingGameId) {
+      // Reuse existing game: send a fresh invite pointing to it (game already exists)
+      await setDoc(doc(collection(db, 'invites')), {
+        fromUid: currentUser.uid,
+        fromEmail: (currentUser.email || '').toLowerCase(),
+        toEmail: email,
+        gameId: existingGameId,
+        fromSelfPetName: mySelfPet,
+        status: 'pending',
+        createdAt: Date.now()
+      });
+      showToast('Existing thread found — opening and notifying partner', 'invite');
+      listenToGame(existingGameId);
+      showGameScreen(existingGameId);
+      input.value = '';
+      return;
+    }
+  }
 
-  // Create pending invite
+  // Brand new connection: create invite WITHOUT creating the game yet.
   await setDoc(doc(collection(db, 'invites')), {
     fromUid: currentUser.uid,
-    fromEmail: currentUser.email || '',
+    fromEmail: (currentUser.email || '').toLowerCase(),
     toEmail: email,
-    gameId,
+    fromSelfPetName: mySelfPet,
+    // no gameId yet — defer creation until acceptance
     status: 'pending',
     createdAt: Date.now()
   });
 
-  alert('Invitation sent to ' + email + '. They will see it when they sign in.');
+  showToast('Invitation sent. Awaiting acceptance from ' + email, 'invite');
   input.value = '';
 
-  // Inviter jumps straight in
-  listenToGame(gameId);
-  showGameScreen(gameId);
+  // Show full-screen waiting page with the video
+  showWaitingScreen(email);
 }
 
 function listenForMyInvites(user) {
@@ -1278,29 +2053,150 @@ function listenForMyInvites(user) {
 
     items.forEach(inv => {
       const row = document.createElement('div');
-      row.className = 'flex items-center justify-between bg-white/5 px-3 py-2 rounded-2xl';
+      row.className = 'flex items-center justify-between bg-white/5 px-3 py-2 rounded-2xl gap-2';
       row.innerHTML = `
-        <div class="min-w-0">
+        <div class="min-w-0 flex-1">
           <div class="text-[10px] text-white/60">From</div>
           <div class="font-mono text-sm truncate">${inv.fromEmail || 'Unknown'}</div>
         </div>
-        <button class="px-3 py-1 text-xs bg-emerald-600/80 active:bg-emerald-600 rounded-xl">Accept</button>
+        <div class="flex gap-2 flex-shrink-0">
+          <button class="accept-btn px-3 py-1 text-xs bg-emerald-600/80 active:bg-emerald-600 rounded-xl">Accept</button>
+          <button class="decline-btn px-2 py-1 text-xs bg-white/10 active:bg-white/20 rounded-xl text-white/70">Decline</button>
+        </div>
       `;
-      const btn = row.querySelector('button');
-      btn.onclick = async () => {
-        btn.disabled = true;
+
+      const acceptBtn = row.querySelector('.accept-btn');
+      const declineBtn = row.querySelector('.decline-btn');
+
+      // ACCEPT handler — creates game if it doesn't exist yet
+      acceptBtn.onclick = async () => {
+        // Ask the invitee for their self pet name BEFORE we accept/create the game.
+        const inviteeSelfPet = await askForPetName('Set your pet name', 'This is the name your partner will see for you.');
+        if (inviteeSelfPet === null) {
+          // user cancelled
+          if (acceptBtn) acceptBtn.disabled = false;
+          if (declineBtn) declineBtn.disabled = false;
+          return;
+        }
+
+        acceptBtn.disabled = true;
+        if (declineBtn) declineBtn.disabled = true;
+
         try {
-          await setDoc(doc(db, 'invites', inv.id), { ...inv, status: 'accepted' }, { merge: true });
-          lastAcceptedThread = { gameId: inv.gameId, partner: inv.fromEmail || 'Partner' };
+          // If the invite already points to a game (reused thread), use it.
+          // Otherwise, create the game NOW (on acceptance).
+          let gameId = inv.gameId;
+
+          if (!gameId) {
+            gameId = generateGameId();
+            const newGame = {
+              id: gameId,
+              story: [],
+              currentPrompt: promptsPool[Math.floor(Math.random() * promptsPool.length)],
+              myAnswer: '',
+              partnerAnswer: '',
+              notes: [],
+              guesses: [],
+              correctGuesses: 0,
+              totalAnswered: 0,
+              loveMeter: 10,
+              createdAt: Date.now(),
+              bridgeIndex: 0,
+              bridgeAnswers: {},
+              members: [(inv.fromEmail || '').toLowerCase(), (user.email || '').toLowerCase()],
+              // Seed pet names:
+              // a (inviter) gets their self name from the invite (if provided)
+              // b (invitee) gets their self name captured just now
+              petNames: {
+                a: inv.fromSelfPetName || '',
+                b: inviteeSelfPet || ''
+              },
+              petNameForPartner: { a: '', b: '' }
+            };
+            await setDoc(doc(db, 'games', gameId), newGame);
+          } else {
+            // Game already existed (reused thread). Still patch the invitee's self name.
+            if (inviteeSelfPet) {
+              const snap = await getDoc(doc(db, 'games', gameId));
+              if (snap.exists()) {
+                const g = snap.data();
+                g.petNames = g.petNames || { a: '', b: '' };
+                g.petNames['b'] = inviteeSelfPet;
+                await setDoc(doc(db, 'games', gameId), g, { merge: true });
+              }
+            }
+          }
+
+          // Mark invite as accepted and attach the (possibly new) gameId
+          await setDoc(doc(db, 'invites', inv.id), {
+            ...inv,
+            gameId,
+            status: 'accepted'
+          }, { merge: true });
+
+          // Invitee only sets their own self pet name here (what they want to be called).
+          // They do NOT set a name for the inviter.
+          try {
+            const mySelf = (document.getElementById('my-pet-name')?.value || '').trim();
+
+            await new Promise(res => setTimeout(res, 30));
+
+            if (mySelf) {
+              gameState.petNames = gameState.petNames || { a: '', b: '' };
+              gameState.petNames['b'] = mySelf;
+              // Do not touch petNameForPartner for the other side here
+              saveToFirebase();
+            }
+          } catch (_) { /* non-fatal */ }
+
+          lastAcceptedThread = { gameId, partner: inv.fromEmail || 'Partner' };
           updateContinueLastBtn();
-          listenToGame(inv.gameId);
-          showGameScreen(inv.gameId);
+
+          // Set correct role for the person who just accepted (they are the joiner)
+          ensureBridgeRole(gameId, false); // 'b'
+
+          // === Accept + pet name done → immediately show ONLY the game screen ===
+          const _w = document.getElementById('waiting-screen');
+          const _l = document.getElementById('landing-screen');
+          const _c = document.getElementById('auth-choice-screen');
+          const _g = document.getElementById('game-screen');
+          if (_w) _w.classList.add('hidden');
+          if (_l) _l.classList.add('hidden');
+          if (_c) _c.classList.add('hidden');
+          if (_g) _g.classList.remove('hidden');
+
+          listenToGame(gameId);
+          showGameScreen(gameId);   // this also forces the game screen and calls renderAll
+          showToast('Invite accepted — thread joined', 'invite');
+
         } catch (e) {
           console.error(e);
-          alert('Failed to accept invitation.');
-          btn.disabled = false;
+          showToast('Unable to join. Please try again.', 'info');
+          acceptBtn.disabled = false;
+          if (declineBtn) declineBtn.disabled = false;
         }
       };
+
+      // DECLINE handler
+      declineBtn.onclick = async () => {
+        declineBtn.disabled = true;
+        if (acceptBtn) acceptBtn.disabled = true;
+
+        try {
+          await setDoc(doc(db, 'invites', inv.id), { ...inv, status: 'declined' }, { merge: true });
+          showToast('Invite declined', 'info');
+          // The list will update via the snapshot listener (we only show 'pending')
+        } catch (e) {
+          console.error(e);
+          showToast('Unable to decline. Please try again.', 'info');
+          declineBtn.disabled = false;
+          if (acceptBtn) acceptBtn.disabled = false;
+        }
+
+        // Auto refresh the invites list / post-auth screen
+        showPostAuthScreen();
+      };
+
       listEl.appendChild(row);
     });
   });
@@ -1476,7 +2372,10 @@ function init() {
   if (googleBtn) googleBtn.onclick = signInWithGoogle;
 
   const signoutBtn = document.getElementById('signout-btn');
-  if (signoutBtn) signoutBtn.onclick = () => signOut(auth);
+  if (signoutBtn) signoutBtn.onclick = async () => {
+    try { await signOut(auth); } catch (_) {}
+    showAuthChoiceScreen();
+  };
 
   // Auth choice screen buttons
   const authSign = document.getElementById('auth-signin-btn');
@@ -1506,9 +2405,42 @@ function init() {
     };
   }
 
-  // "New Game" button inside an active game (bottom of game screen)
+  // "New Game" button inside an active game (bottom of game screen) — show verification first
   const newGameBottom = document.getElementById('new-game-bottom-btn');
-  if (newGameBottom) newGameBottom.onclick = forceNewGame;
+  if (newGameBottom) {
+    newGameBottom.onclick = () => {
+      showConfirmToast(
+        'Create a new game thread with this partner? Your current thread will stay as-is.',
+        () => forceNewGame(),
+        null
+      );
+    };
+  }
+
+  // "End Game" button — shows confirmation toast before clearing local state + marking thread removed
+  const endGameBtn = document.getElementById('end-game-btn');
+  if (endGameBtn) {
+    endGameBtn.onclick = () => {
+      if (!gameState || !gameState.id) return;
+      showConfirmToast(
+        'End this game thread? This removes it from your list only (partner keeps theirs).',
+        async () => {
+          try {
+            const myEmail = (currentUser?.email || '').toLowerCase();
+            if (myEmail) {
+              await removeThread(gameState.id, myEmail);
+            }
+          } catch (_) {}
+          showToast('Game ended', 'info');
+          // Clear current game view and go back to landing
+          if (currentGameUnsubscribe) { currentGameUnsubscribe(); currentGameUnsubscribe = null; }
+          gameState = {};
+          document.getElementById('game-screen').classList.add('hidden');
+          document.getElementById('landing-screen').classList.remove('hidden');
+        }
+      );
+    };
+  }
 
   // Auto join from URL (classic Game ID path)
   const params = new URLSearchParams(window.location.search);
@@ -1533,6 +2465,166 @@ function init() {
 
 window.switchTab = switchTab;
 window.answerGuess = answerGuess;
+
+// ===== Waiting Screen helpers (full-screen video + live wait for acceptance) =====
+let waitingInviteUnsub = null;
+let waitingPollTimer = null;
+
+function showWaitingScreen(partnerEmail) {
+  const wait = document.getElementById('waiting-screen');
+  const video = document.getElementById('waiting-video');
+  const cancelBtn = document.getElementById('cancel-wait-btn');
+  if (!wait) return;
+
+  // hide other screens
+  const landing = document.getElementById('landing-screen');
+  const game = document.getElementById('game-screen');
+  const choice = document.getElementById('auth-choice-screen');
+  if (landing) landing.classList.add('hidden');
+  if (game) game.classList.add('hidden');
+  if (choice) choice.classList.add('hidden');
+
+  wait.classList.remove('hidden');
+
+  // try to play video (best effort)
+  if (video) {
+    try { video.play().catch(() => {}); } catch (_) {}
+  }
+
+  // clean previous listeners
+  if (waitingInviteUnsub) { waitingInviteUnsub(); waitingInviteUnsub = null; }
+  if (waitingPollTimer) { clearInterval(waitingPollTimer); waitingPollTimer = null; }
+
+  const myUid = currentUser?.uid || null;
+  const myEmail = (currentUser?.email || '').toLowerCase();
+  const target = (partnerEmail || '').toLowerCase();
+
+  // Live listener for the pending invite we just sent
+  const q = query(
+    collection(db, 'invites'),
+    where('fromUid', '==', myUid),
+    where('toEmail', '==', target),
+    where('status', '==', 'pending')
+  );
+
+  waitingInviteUnsub = onSnapshot(q, (snap) => {
+    let found = null;
+    snap.forEach(d => { if (!found) found = { id: d.id, ...d.data() }; });
+
+    if (!found) {
+      // maybe it was accepted/declined very fast — check accepted too
+      const qa = query(
+        collection(db, 'invites'),
+        where('fromUid', '==', myUid),
+        where('toEmail', '==', target),
+        where('status', '==', 'accepted')
+      );
+      getDocs(qa).then(s => {
+        let acc = null;
+        s.forEach(d => { if (!acc) acc = { id: d.id, ...d.data() }; });
+        if (acc && acc.gameId) {
+          hideWaitingScreen();
+          listenToGame(acc.gameId);
+          showGameScreen(acc.gameId);
+        }
+      }).catch(() => {});
+      return;
+    }
+
+    // if this pending invite suddenly gained a gameId, poll lightly until it's accepted
+    if (found.gameId) {
+      // fall through to the interval poller below
+    }
+  });
+
+  // Poller: check for acceptance (and that a gameId exists)
+  waitingPollTimer = setInterval(async () => {
+    try {
+      const qa = query(
+        collection(db, 'invites'),
+        where('fromUid', '==', myUid),
+        where('toEmail', '==', target),
+        where('status', '==', 'accepted')
+      );
+      const s = await getDocs(qa);
+      let acc = null;
+      s.forEach(d => { if (!acc) acc = { id: d.id, ...d.data() }; });
+
+      if (acc && acc.gameId) {
+        hideWaitingScreen();
+        listenToGame(acc.gameId);
+        showGameScreen(acc.gameId);
+      }
+    } catch (_) {}
+  }, 1500);
+
+  // Cancel: mark latest pending invite as removed for me (or declined if we want to be strict)
+  if (cancelBtn) {
+    cancelBtn.onclick = async () => {
+      hideWaitingScreen();
+      try {
+        const qp = query(
+          collection(db, 'invites'),
+          where('fromUid', '==', myUid),
+          where('toEmail', '==', target),
+          where('status', '==', 'pending')
+        );
+        const sp = await getDocs(qp);
+        const ups = [];
+        sp.forEach(d => {
+          const data = d.data();
+          const removed = Array.isArray(data.removedFor) ? [...data.removedFor] : [];
+          if (!removed.includes(myEmail)) removed.push(myEmail);
+          ups.push(setDoc(doc(db, 'invites', d.id), { removedFor: removed }, { merge: true }));
+        });
+        await Promise.all(ups);
+      } catch (_) {}
+      showToast('Invite canceled', 'info');
+
+      // Auto refresh to the correct screen (landing for signed-in users)
+      showPostAuthScreen();
+    };
+  }
+}
+
+function hideWaitingScreen() {
+  const wait = document.getElementById('waiting-screen');
+  if (wait) wait.classList.add('hidden');
+
+  if (waitingInviteUnsub) { waitingInviteUnsub(); waitingInviteUnsub = null; }
+  if (waitingPollTimer) { clearInterval(waitingPollTimer); waitingPollTimer = null; }
+
+  // Auto refresh to the correct post-auth view so the app doesn't go blank
+  // (this is also called from the waiting poller when the game loads)
+  showPostAuthScreen();
+}
+
+// Centralized screen refresher used after auth changes and invite cancel/decline events
+function showPostAuthScreen() {
+  const choice = document.getElementById('auth-choice-screen');
+  const landing = document.getElementById('landing-screen');
+  const game = document.getElementById('game-screen');
+  const wait = document.getElementById('waiting-screen');
+
+  if (wait) wait.classList.add('hidden');
+
+  if (currentUser) {
+    // Signed in: prefer active game if one is loaded, otherwise landing
+    if (choice) choice.classList.add('hidden');
+    if (game && gameState && gameState.id) {
+      // keep game visible
+      if (landing) landing.classList.add('hidden');
+    } else {
+      if (game) game.classList.add('hidden');
+      if (landing) landing.classList.remove('hidden');
+    }
+  } else {
+    // Signed out: show the Gmail auth choice screen
+    if (landing) landing.classList.add('hidden');
+    if (game) game.classList.add('hidden');
+    if (choice) choice.classList.remove('hidden');
+  }
+}
 
 // Run init reliably
 if (document.readyState === 'loading') {

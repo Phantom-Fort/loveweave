@@ -4,39 +4,58 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ======================
-    // GAMES (open as requested)
+    // GAMES
     // ======================
+    // Open for now (simple dev). Any signed-in user can read/write games.
     match /games/{gameId} {
       allow read, write: if true;
     }
 
     // ======================
-    // USERS (for email lookup when sending invites)
+    // USERS
     // ======================
     match /users/{uid} {
+      // Any signed-in user can read profiles (to look up by email for invites)
       allow read: if request.auth != null;
+
+      // Only the owner can create their own profile
       allow create: if request.auth != null && request.auth.uid == uid;
+
+      // Only the owner can update their own profile
       allow update: if request.auth != null && request.auth.uid == uid;
+
       allow delete: if false;
     }
 
     // ======================
-    // INVITES (for email invitations + in-app notifications)
+    // INVITES
     // ======================
     match /invites/{inviteId} {
+      // Any signed-in user can create (send) an invite
       allow create: if request.auth != null;
-      allow read: if request.auth != null &&
-        (resource.data.toEmail == request.auth.token.email ||
-         resource.data.fromUid == request.auth.uid);
+
+      // Read allowed if:
+      // - you are the recipient (toEmail matches your auth email, case-insensitive), OR
+      // - you are the sender (fromUid or fromEmail matches)
+      allow read: if request.auth != null && (
+        // recipient checks (case-insensitive)
+        (resource.data.toEmail != null && resource.data.toEmail.lower() == request.auth.token.email.lower()) ||
+        // sender checks
+        resource.data.fromUid == request.auth.uid ||
+        (resource.data.fromEmail != null && resource.data.fromEmail.lower() == request.auth.token.email.lower())
+      );
+
+      // Only the recipient can update (e.g. accept)
       allow update: if request.auth != null &&
-        resource.data.toEmail == request.auth.token.email;
+        (resource.data.toEmail != null && resource.data.toEmail.lower() == request.auth.token.email.lower());
+
       allow delete: if false;
     }
 
     // ======================
-    // QUESTIONS (Bridge the Gap + Love Sparks / Daily Prompts)
+    // QUESTIONS (Bridge + Love Sparks)
     // ======================
-    match /questions/{docId} {
+    match /questions/{setId} {
       allow read: if request.auth != null;
       allow create, update: if request.auth != null;
       allow delete: if false;

@@ -141,6 +141,8 @@
                 </div>
             </div>
 
+            <!-- Pet name input is now handled via the modal when sending or accepting an invite -->
+
             <div>
                 <p class="text-xs mb-0.5 text-white/70">Invitations</p>
                 <div id="invitations-list" class="space-y-1 text-sm min-h-[20px]"></div>
@@ -193,6 +195,23 @@
         </div>
     </div>
 
+    <!-- Waiting Screen (full-screen video + "Waiting..." until invitee accepts) -->
+    <div id="waiting-screen" class="hidden fixed inset-0 z-[300] bg-[#1a1423] flex items-center justify-center overflow-hidden">
+      <video id="waiting-video" autoplay loop muted playsinline class="absolute inset-0 w-full h-full object-cover">
+        <source src="/loveweave_video.mp4" type="video/mp4">
+      </video>
+      <div class="absolute inset-0 bg-black/45"></div>
+
+      <div class="relative z-10 flex flex-col items-center text-center px-6">
+        <div class="text-white text-4xl md:text-5xl font-semibold tracking-[6px] mb-3">Waiting...</div>
+        <div class="text-white/70 text-sm">We'll load the game as soon as they accept the invite</div>
+        <button id="cancel-wait-btn"
+                class="mt-8 px-5 py-2 text-xs bg-white/10 hover:bg-white/15 active:bg-white/10 border border-white/20 rounded-2xl">
+          Cancel invite
+        </button>
+      </div>
+    </div>
+
     <!-- Game Screen -->
     <div id="game-screen" class="hidden max-w-5xl mx-auto px-4 flex flex-col h-full pb-1 overflow-hidden">
         <div class="flex items-center justify-between pt-2 pb-1 flex-shrink-0">
@@ -205,7 +224,12 @@
             </div>
             <div class="flex items-center gap-x-2 bg-white/5 px-3 py-1 rounded-2xl text-sm">
                 <i class="fa-solid fa-heart text-pink-400"></i>
-                <span id="love-meter-value" class="font-mono">45</span>
+                <span id="love-meter-value" class="font-mono">10.00</span>
+                <span id="love-streak-badge" class="ml-1 text-[10px] px-1.5 py-px rounded bg-white/10 text-white/70"></span>
+            </div>
+            <!-- Badges row -->
+            <div id="badges-bar" class="mt-1 flex gap-1 flex-wrap text-[10px]">
+              <div id="badges-display" class="flex gap-1 flex-wrap items-center"></div>
             </div>
         </div>
 
@@ -218,12 +242,16 @@
             <button onclick="switchTab(4)" id="tab-4" class="section-tab px-4 py-2 font-medium text-white/70 whitespace-nowrap text-sm">Bridge</button>
         </div>
 
-        <!-- Bottom New Game -->
-        <div class="mb-2 flex-shrink-0">
+        <!-- Bottom New Game + End Game -->
+        <div class="mb-2 flex-shrink-0 flex gap-2">
             <button id="new-game-bottom-btn"
-                    class="w-full py-1.5 bg-white/10 active:bg-white/20 rounded-2xl font-medium text-xs flex items-center justify-center gap-x-1.5">
+                    class="flex-1 py-1.5 bg-white/10 active:bg-white/20 rounded-2xl font-medium text-xs flex items-center justify-center gap-x-1.5">
                 <i class="fa-solid fa-plus"></i>
                 <span>New Game</span>
+            </button>
+            <button id="end-game-btn"
+                    class="flex-1 py-1.5 bg-red-600/70 active:bg-red-600 text-white/90 rounded-2xl font-medium text-xs">
+                End Game
             </button>
         </div>
 
@@ -268,11 +296,19 @@
                 </div>
                 <div id="current-prompt" class="bg-white/5 p-3 rounded-2xl mb-2 text-sm"></div>
                 <div id="partner-answer" class="bg-white/5 p-2 rounded-2xl mb-2 text-sm">
-                    <div class="text-[10px] text-white/50">Partner</div>
+                    <div id="partner-answer-label" class="text-[10px] text-white/50">Partner</div>
                     <p id="partner-answer-text" class="text-white/70 text-xs">Waiting...</p>
                 </div>
                 <textarea id="my-answer" rows="2" placeholder="Your answer..." class="w-full bg-white/5 border border-white/20 rounded-2xl px-3 py-2 mb-2 text-sm"></textarea>
                 <button id="submit-answer-btn" class="w-full py-2 bg-gradient-to-r from-pink-500 to-rose-500 rounded-2xl text-sm active:brightness-105">Submit</button>
+
+                <!-- Past answered prompts by partner -->
+                <div class="mt-2">
+                  <p class="text-[10px] text-white/60 mb-1">Partner answered these — pick one to reply</p>
+                  <select id="past-daily-select" class="w-full bg-[#2a2433] border border-white/10 text-xs rounded-xl px-2 py-1">
+                    <option value="">— select —</option>
+                  </select>
+                </div>
             </div>
         </div>
 
@@ -307,7 +343,12 @@
             <div class="glass rounded-2xl p-3 flex flex-col flex-1 min-h-0">
                 <div class="flex items-center justify-between mb-1">
                     <div class="text-sm font-semibold">Bridge the Gap</div>
-                    <div class="text-[10px] text-white/50">500 Qs</div>
+                    <div class="flex items-center gap-x-2 text-[10px]">
+                        <span id="bridge-progress" class="text-white/70"></span>
+                        <span class="text-white/40">·</span>
+                        <span><span id="bridge-completed" class="text-white/70"></span>/<span id="bridge-total"></span></span>
+                        <span class="text-white/50 ml-1">500 Qs</span>
+                    </div>
                 </div>
                 <div class="relative mb-2">
                     <button id="bridge-category-btn"
@@ -344,6 +385,24 @@
                 </div>
             </div>
         </div>
+    </div>
+
+    <!-- Pet Name Prompt Modal (shown when sending invite or accepting) -->
+    <div id="petname-modal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[250] p-4">
+      <div class="w-full max-w-xs bg-[#1f1a27] border border-white/10 rounded-3xl p-5">
+        <div id="petname-modal-title" class="text-lg font-semibold mb-1">Set your pet name</div>
+        <div id="petname-modal-desc" class="text-white/70 text-sm mb-3">This is the name your partner will see for you.</div>
+
+        <input id="petname-modal-input" type="text" placeholder="e.g. Baby, Love, Darling..."
+               class="w-full bg-white/5 border border-white/20 rounded-2xl px-4 py-2 text-sm mb-4 focus:outline-none focus:border-pink-400">
+
+        <div class="flex gap-2">
+          <button id="petname-modal-skip"
+                  class="flex-1 py-2 bg-white/10 active:bg-white/15 rounded-2xl text-sm">Skip</button>
+          <button id="petname-modal-save"
+                  class="flex-1 py-2 bg-white text-[#1a1423] font-semibold rounded-2xl active:bg-white/90 text-sm">Save &amp; Continue</button>
+        </div>
+      </div>
     </div>
 
     <!-- Help Modal -->
@@ -402,5 +461,12 @@
             </div>
         </div>
     </footer>
+
+    <!-- Toast container: center of page, app-styled (dark glass, logo icon). Not browser alert or system notification. -->
+    <div id="toast-container" class="fixed left-1/2 top-[32%] -translate-x-1/2 z-[200] flex flex-col items-center gap-2 pointer-events-none"></div>
+
+    <!-- Toast backdrop blur (appears only when a toast is visible) -->
+    <div id="toast-backdrop" class="hidden fixed inset-0 z-[190] bg-black/35 backdrop-blur-sm"></div>
+
   </body>
 </html>
