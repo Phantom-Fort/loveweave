@@ -511,26 +511,49 @@ function renderGuesses() {
     return;
   }
 
+  const myRole = getBridgeRoleForGame(gameState.id);
+
   gameState.guesses.forEach(guess => {
     const div = document.createElement('div');
     div.className = 'p-4 rounded-2xl bg-white/5 border border-white/10';
 
+    const submitRole = guess.submittedByRole || null;
+    const isMySubmission = submitRole ? (submitRole === myRole) : (guess.submittedBy === "You");
+
+    const submittedLabel = isMySubmission ? "You" : "Partner";
+
     let statusHTML = '';
     if (guess.status === "pending") {
-      statusHTML = `
-        <div class="flex gap-2 mt-3">
-          <button onclick="answerGuess(${guess.id}, true)" class="flex-1 py-2 bg-emerald-600/80 active:bg-emerald-600 rounded-2xl text-sm">True</button>
-          <button onclick="answerGuess(${guess.id}, false)" class="flex-1 py-2 bg-red-600/80 active:bg-red-600 rounded-2xl text-sm">False</button>
-        </div>
-      `;
+      if (isMySubmission) {
+        statusHTML = `<div class="mt-2 text-xs text-white/60 italic">Awaiting your partner's response...</div>`;
+      } else {
+        statusHTML = `
+          <div class="flex gap-2 mt-3">
+            <button onclick="answerGuess(${guess.id}, true)" class="flex-1 py-2 bg-emerald-600/80 active:bg-emerald-600 rounded-2xl text-sm">True</button>
+            <button onclick="answerGuess(${guess.id}, false)" class="flex-1 py-2 bg-red-600/80 active:bg-red-600 rounded-2xl text-sm">False</button>
+          </div>
+        `;
+      }
     } else {
       const isCorrect = guess.status === "true";
-      statusHTML = `<div class="mt-3 text-sm ${isCorrect ? 'text-emerald-400' : 'text-red-400'} font-medium">${isCorrect ? '✓ You were right!' : '✗ Not quite'}</div>`;
+      const answeredByMe = guess.answeredByRole ? (guess.answeredByRole === myRole) : (guess.answeredBy === "You");
+
+      if (isMySubmission) {
+        // I submitted → partner answered
+        statusHTML = `<div class="mt-3 text-sm ${isCorrect ? 'text-emerald-400' : 'text-red-400'} font-medium">
+          ${isCorrect ? '✓ Your partner confirmed this' : '✗ Your partner said this is not true'}
+        </div>`;
+      } else {
+        // Partner submitted → I answered (or in old data)
+        statusHTML = `<div class="mt-3 text-sm ${isCorrect ? 'text-emerald-400' : 'text-red-400'} font-medium">
+          ${isCorrect ? '✓ You confirmed this' : '✗ You said this is not true'}
+        </div>`;
+      }
     }
 
     div.innerHTML = `
       <p class="text-[15px]">${guess.text}</p>
-      <div class="text-xs text-white/50 mt-1">By ${guess.submittedBy}</div>
+      <div class="text-xs text-white/50 mt-1">By ${submittedLabel}</div>
       ${statusHTML}
     `;
     container.appendChild(div);
@@ -594,10 +617,11 @@ function addGuess() {
 
   if (!gameState.guesses) gameState.guesses = [];
 
+  const myRole = getBridgeRoleForGame(gameState.id);
   gameState.guesses.push({
     id: Date.now(),
     text: text,
-    submittedBy: "You",
+    submittedByRole: myRole,
     status: "pending"
   });
 
@@ -611,8 +635,20 @@ function answerGuess(guessId, isTrue) {
   const guess = gameState.guesses.find(g => g.id === guessId);
   if (!guess || guess.status !== "pending") return;
 
+  const myRole = getBridgeRoleForGame(gameState.id);
+  const submitRole = guess.submittedByRole;
+
+  // Strict rule: only the partner (not the submitter) can mark true/false
+  if (submitRole && submitRole === myRole) {
+    return; // I submitted this guess — I cannot answer it
+  }
+  // Legacy fallback: if no role data, treat "You" as the submitter
+  if (!submitRole && guess.submittedBy === "You") {
+    return;
+  }
+
   guess.status = isTrue ? "true" : "false";
-  guess.answeredBy = "You";
+  guess.answeredByRole = myRole;
 
   gameState.totalAnswered = (gameState.totalAnswered || 0) + 1;
   if (isTrue) {
