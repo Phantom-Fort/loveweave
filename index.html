@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LoveWeave</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        .touch-target {
+            min-height: 48px;
+            min-width: 48px;
+        }
+        .section-tab {
+            padding-top: 12px;
+            padding-bottom: 12px;
+        }
+    </style>
+</head>
+<body class="bg-[#1a1423] text-white min-h-screen">
+    <div id="hearts-bg" class="fixed inset-0 pointer-events-none z-0"></div>
+
+    <!-- Navbar -->
+    <nav class="border-b border-white/10 bg-black/30 backdrop-blur-xl sticky top-0 z-50">
+        <div class="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
+            <div class="flex items-center gap-x-3">
+                <div class="w-9 h-9 bg-gradient-to-br from-pink-500 to-purple-600 rounded-2xl flex items-center justify-center">
+                    <i class="fa-solid fa-heart text-white text-2xl"></i>
+                </div>
+                <span class="text-2xl font-bold tracking-tight">LoveWeave</span>
+            </div>
+            <div id="connection-status" class="px-3 py-1 text-xs bg-white/10 rounded-2xl">Connecting...</div>
+        </div>
+    </nav>
+
+    <!-- Auth Choice Screen -->
+    <div id="auth-choice-screen" class="max-w-md mx-auto px-5 pt-16">
+        <div class="text-center mb-10">
+            <h1 class="text-5xl font-bold tracking-tighter mb-2">LoveWeave</h1>
+            <p class="text-white/70 mb-8">Real-time space for long-distance couples</p>
+        </div>
+
+        <div class="glass p-6 rounded-3xl mb-4 space-y-4">
+            <p class="text-sm text-white/70">Choose how you want to play:</p>
+            <button id="auth-signin-btn"
+                    class="w-full py-3.5 bg-white text-[#1a1423] font-semibold rounded-3xl flex items-center justify-center gap-x-2 active:bg-white/90 touch-target">
+                <i class="fa-brands fa-google"></i>
+                <span>Sign in with Google</span>
+            </button>
+            <button id="auth-anon-btn"
+                    class="w-full py-3 bg-white/10 active:bg-white/20 rounded-3xl font-medium text-sm touch-target">
+                Continue without login (use Game ID)
+            </button>
+            <p class="text-[10px] text-white/50 mt-2 leading-snug">Sign in to add partners by email and get in-app invitations.</p>
+        </div>
+    </div>
+
+    <!-- Landing Screen -->
+    <div id="landing-screen" class="max-w-md mx-auto px-5 pt-12 hidden">
+        <div class="text-center mb-7">
+            <h1 class="text-5xl font-bold tracking-tighter mb-2">LoveWeave</h1>
+            <p class="text-white/70">Real-time space for long-distance couples</p>
+        </div>
+
+        <!-- Auth -->
+        <div id="auth-area" class="mb-7">
+            <button id="google-signin-btn"
+                    class="w-full py-3.5 bg-white text-[#1a1423] font-semibold rounded-3xl flex items-center justify-center gap-x-2 active:bg-white/90 touch-target">
+                <i class="fa-brands fa-google"></i>
+                <span>Sign in with Google</span>
+            </button>
+            <div id="user-info" class="hidden mt-3 text-sm items-center gap-x-2 bg-white/5 px-4 py-2 rounded-2xl">
+                <span class="truncate flex-1 min-w-0">Signed in as <span id="user-email" class="font-mono text-xs"></span></span>
+                <button id="signout-btn" class="text-xs px-3 py-1 bg-white/10 hover:bg-white/15 rounded-xl flex-shrink-0">Sign out</button>
+            </div>
+        </div>
+
+        <!-- Partner tools (shown after sign in) -->
+        <div id="partner-tools" class="hidden mb-7 space-y-5">
+            <div>
+                <p class="text-sm mb-2 text-white/70">Add partner by Gmail</p>
+                <div class="flex gap-2">
+                    <input id="partner-email" type="email" placeholder="partner@gmail.com" 
+                           class="flex-1 bg-white/5 border border-white/20 rounded-2xl px-4 py-3 text-sm h-12">
+                    <button id="invite-partner-btn" 
+                            class="px-5 bg-white/10 active:bg-white/20 rounded-2xl font-medium touch-target h-12">Invite</button>
+                </div>
+            </div>
+
+            <div id="pending-section" class="hidden">
+                <p class="text-sm mb-2 text-white/70">Pending invitations</p>
+                <div id="pending-list" class="space-y-2 text-sm"></div>
+            </div>
+
+            <div id="connections-section" class="hidden">
+                <p class="text-sm mb-2 text-white/70">Your threads</p>
+                <div id="connections-list" class="space-y-2 text-sm"></div>
+            </div>
+        </div>
+
+        <div class="space-y-4">
+            <button id="create-game-btn"
+                    class="w-full py-3.5 bg-white text-[#1a1423] font-semibold text-lg rounded-3xl flex items-center justify-center gap-x-3 active:bg-white/90 touch-target">
+                <i class="fa-solid fa-plus"></i>
+                <span>Create New Game</span>
+            </button>
+
+            <div class="glass p-5 rounded-3xl">
+                <p class="text-sm mb-3 text-white/70">Join with Game ID</p>
+                <div class="flex gap-2">
+                    <input id="join-game-id" type="text" placeholder="LOVE-ABC123" 
+                           class="flex-1 bg-white/5 border border-white/20 rounded-2xl px-4 py-3 text-sm h-11">
+                    <button id="join-game-btn" 
+                            class="px-5 bg-white/10 active:bg-white/20 rounded-2xl font-medium touch-target h-11">Join</button>
+                </div>
+            </div>
+
+            <button id="help-btn"
+                    class="w-full py-3 mt-1 bg-white/10 active:bg-white/20 rounded-3xl font-medium text-sm flex items-center justify-center gap-x-2 touch-target">
+                <i class="fa-solid fa-question-circle"></i>
+                <span>How to Play</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Game Screen -->
+    <div id="game-screen" class="hidden max-w-5xl mx-auto px-4 pb-8">
+        <div class="flex items-center justify-between mb-6 pt-4">
+            <div>
+                <div class="flex items-center gap-x-3">
+                    <h2 class="text-3xl font-bold">Our Thread</h2>
+                    <div class="px-3 py-1 bg-white/10 text-xs font-mono rounded-2xl" id="game-id-display"></div>
+                </div>
+                <p class="text-white/50 text-sm">Real-time synced</p>
+            </div>
+            <div class="flex items-center gap-x-2 bg-white/5 px-4 py-2 rounded-3xl">
+                <i class="fa-solid fa-heart text-pink-400"></i>
+                <span id="love-meter-value" class="font-mono text-sm">45</span>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="flex border-b border-white/10 mb-5 overflow-x-auto">
+            <button onclick="switchTab(0)" id="tab-0" class="section-tab active px-5 py-3 font-medium border-b-[3px] border-pink-400 whitespace-nowrap">Our Story</button>
+            <button onclick="switchTab(1)" id="tab-1" class="section-tab px-5 py-3 font-medium text-white/70 whitespace-nowrap">Daily Spark</button>
+            <button onclick="switchTab(2)" id="tab-2" class="section-tab px-5 py-3 font-medium text-white/70 whitespace-nowrap">Love Notes</button>
+            <button onclick="switchTab(3)" id="tab-3" class="section-tab px-5 py-3 font-medium text-white/70 whitespace-nowrap">Guess About Me</button>
+            <button onclick="switchTab(4)" id="tab-4" class="section-tab px-5 py-3 font-medium text-white/70 whitespace-nowrap">Bridge the Gap</button>
+        </div>
+
+        <!-- Our Story -->
+        <div id="tab-content-0">
+            <div class="glass rounded-3xl p-5 mb-6">
+                <div class="mb-4 p-3 bg-white/5 rounded-2xl text-sm">
+                    <strong>Why this matters:</strong> Build your shared relationship story and memories together.
+                </div>
+                <div id="story-container" class="space-y-4 max-h-[340px] overflow-y-auto mb-5"></div>
+                <div class="border-t border-white/10 pt-5">
+                    <select id="story-tone" class="w-full bg-white/5 border border-white/20 rounded-2xl px-4 py-3 mb-3 text-sm">
+                        <option value="romantic">❤️ Romantic</option>
+                        <option value="silly">😄 Fun</option>
+                        <option value="future">🌟 Future</option>
+                        <option value="spicy">🔥 Spicy</option>
+                    </select>
+                    <textarea id="story-input" rows="3" placeholder="Add to our story..." class="w-full bg-white/5 border border-white/20 rounded-3xl px-4 py-3"></textarea>
+                    <button id="add-story-btn" class="mt-3 w-full py-3.5 bg-white text-[#1a1423] font-semibold rounded-3xl active:bg-white/90">Add to Story</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Daily Spark -->
+        <div id="tab-content-1" class="hidden">
+            <div class="glass rounded-3xl p-5">
+                <div class="flex justify-between mb-3">
+                    <h3 class="font-semibold">Today's Spark</h3>
+                    <button id="new-prompt-btn" class="text-sm px-4 py-1 bg-white/10 rounded-2xl active:bg-white/20">New Prompt</button>
+                </div>
+                <div id="current-prompt" class="bg-white/5 p-5 rounded-3xl mb-6"></div>
+                <div id="partner-answer" class="bg-white/5 p-4 rounded-3xl mb-4">
+                    <div class="text-xs text-white/50 mb-1">Partner's answer</div>
+                    <p id="partner-answer-text" class="text-white/70">Your partner hasn't answered yet...</p>
+                </div>
+                <textarea id="my-answer" rows="3" placeholder="Your answer..." class="w-full bg-white/5 border border-white/20 rounded-3xl px-4 py-3 mb-3"></textarea>
+                <button id="submit-answer-btn" class="w-full py-3.5 bg-gradient-to-r from-pink-500 to-rose-500 rounded-3xl active:brightness-105">Submit Answer</button>
+            </div>
+        </div>
+
+        <!-- Love Notes -->
+        <div id="tab-content-2" class="hidden">
+            <div class="glass rounded-3xl p-5">
+                <div class="flex gap-2 mb-4">
+                    <input id="note-input" type="text" placeholder="Leave a love note..." class="flex-1 bg-white/5 border border-white/20 rounded-3xl px-4 py-3">
+                    <button id="send-note-btn" class="px-6 bg-gradient-to-r from-pink-500 to-purple-600 rounded-3xl active:brightness-105">Send</button>
+                </div>
+                <div id="notes-container" class="space-y-3 max-h-[300px] overflow-y-auto"></div>
+            </div>
+        </div>
+
+        <!-- Guess About Me -->
+        <div id="tab-content-3" class="hidden">
+            <div class="glass rounded-3xl p-5">
+                <div class="flex justify-between mb-2">
+                    <h3 class="font-semibold">Guess About Me</h3>
+                    <div id="guess-score" class="text-sm px-3 py-1 bg-white/10 rounded-2xl">Score: 0/0</div>
+                </div>
+                <div class="mb-4">
+                    <textarea id="guess-input" rows="2" placeholder="Write something about your partner..." class="w-full bg-white/5 border border-white/20 rounded-3xl px-4 py-3"></textarea>
+                    <button id="submit-guess-btn" class="mt-3 w-full py-3 bg-gradient-to-r from-purple-500 to-pink-500 rounded-3xl active:brightness-105">Submit Guess</button>
+                </div>
+                <div id="guesses-container" class="space-y-4"></div>
+            </div>
+        </div>
+
+        <!-- Bridge the Gap -->
+        <div id="tab-content-4" class="hidden">
+            <div class="glass rounded-3xl p-5">
+                <div class="flex items-center justify-between mb-3">
+                    <div>
+                        <h3 class="font-semibold">Bridge the Gap</h3>
+                        <p class="text-xs text-white/60">500 Questions • Categorized (Emotional, Conflict, Values, Intimacy, etc.)</p>
+                    </div>
+                    <div class="text-right">
+                        <div id="bridge-progress" class="text-xs px-3 py-1 bg-white/10 rounded-2xl">Q 1 / <span id="bridge-total">500</span></div>
+                        <div id="bridge-completed" class="text-[10px] text-white/50 mt-0.5">0 answered</div>
+                    </div>
+                </div>
+                <div class="mb-2">
+                    <select id="bridge-category" class="w-full bg-white/5 border border-white/20 rounded-2xl px-4 py-2 text-sm"></select>
+                </div>
+
+                <div id="bridge-question" class="bg-white/5 p-5 rounded-3xl min-h-[88px] text-[15px] mb-4"></div>
+
+                <div class="flex gap-2 mb-4">
+                    <button id="bridge-prev-btn" class="flex-1 py-2.5 bg-white/10 active:bg-white/20 rounded-2xl text-sm">Back</button>
+                    <button id="bridge-next-btn" class="flex-1 py-2.5 bg-white/10 active:bg-white/20 rounded-2xl text-sm">Next</button>
+                </div>
+
+                <div class="border-t border-white/10 pt-4">
+                    <textarea id="bridge-my-answer" rows="2" placeholder="Your answer (saved live)..." class="w-full bg-white/5 border border-white/20 rounded-3xl px-4 py-3 mb-2"></textarea>
+                    <button id="bridge-save-btn" class="w-full py-2.5 bg-gradient-to-r from-pink-500 to-purple-600 rounded-3xl text-sm active:brightness-105">Save Answer</button>
+                </div>
+
+                <div class="mt-4">
+                    <div class="text-xs text-white/60 mb-1">Partner's answer</div>
+                    <div id="bridge-partner-answer" class="bg-white/5 p-4 rounded-3xl text-sm text-white/80">Waiting for partner...</div>
+                </div>
+
+                <div class="mt-4 flex gap-2">
+                    <button id="bridge-random-btn" class="flex-1 py-2 bg-white/10 active:bg-white/20 rounded-2xl text-sm">Random Question</button>
+                    <button id="bridge-reset-btn" class="flex-1 py-2 bg-white/10 active:bg-white/20 rounded-2xl text-sm">Reset Progress</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Help Modal -->
+    <div id="help-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+        <div class="max-w-md w-full bg-[#1a1423] border border-white/10 rounded-3xl p-6 text-sm">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-xl font-semibold">How to Play</h3>
+                <button id="close-help-btn" class="text-white/60 hover:text-white text-2xl leading-none">&times;</button>
+            </div>
+
+            <div class="space-y-4 text-white/80">
+                <div>
+                    <strong class="text-white">1. Two ways to start</strong><br>
+                    • <strong>Sign in with Google</strong> to invite partners by email (they get an in-app notification).<br>
+                    • Or <strong>Continue without login</strong> and use a Game ID (classic mode).
+                </div>
+                <div>
+                    <strong class="text-white">2. Play together in real-time</strong>
+                    <ul class="list-disc pl-5 mt-1 space-y-1">
+                        <li><strong>Our Story</strong> — Write your shared story. Choose a tone (romantic, fun, future, spicy).</li>
+                        <li><strong>Daily Spark</strong> — Answer the daily prompt. See your partner's answer appear live.</li>
+                        <li><strong>Love Notes</strong> — Send quick loving messages that both see instantly.</li>
+                        <li><strong>Guess About Me</strong> — Write something about your partner. They mark True/False and you earn points.</li>
+                        <li><strong>Bridge the Gap</strong> — 500 categorized questions (Emotional, Conflict, Values, Intimacy, etc.). Filter by category.</li>
+                    </ul>
+                </div>
+                <div>
+                    Everything stays in sync automatically. Have fun weaving your love!
+                </div>
+            </div>
+
+            <button id="close-help-btn2"
+                    class="mt-6 w-full py-3 bg-white text-[#1a1423] font-semibold rounded-3xl active:bg-white/90">
+                Got it, let's play ❤️
+            </button>
+        </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
